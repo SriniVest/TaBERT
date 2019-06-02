@@ -121,7 +121,7 @@ class TableExtractor(multiprocessing.Process):
             table = self.extract_table_data(table_html)
 
             # if there is not any context
-            if not parsed_context and not table.caption:
+            if table and not parsed_context and not table.caption:
                 continue
 
             if table:

@@ -45,29 +45,6 @@ class TableDatabase:
             self.documents.append(table)
         self.table_ids.append(table.guid)
 
-    def _precalculate_doc_weights(self):
-        self.doc_cumsum = np.cumsum(self.table_ids)
-        self.cumsum_max = self.doc_cumsum[-1]
-
-    def sample_doc(self, current_idx, sentence_weighted=True):
-        # Uses the current iteration counter to ensure we don't sample the same doc twice
-        if sentence_weighted:
-            # With sentence weighting, we sample docs proportionally to their sentence length
-            if self.doc_cumsum is None or len(self.doc_cumsum) != len(self.table_ids):
-                self._precalculate_doc_weights()
-            rand_start = self.doc_cumsum[current_idx]
-            rand_end = rand_start + self.cumsum_max - self.table_ids[current_idx]
-            sentence_index = randrange(rand_start, rand_end) % self.cumsum_max
-            sampled_doc_index = np.searchsorted(self.doc_cumsum, sentence_index, side='right')
-        else:
-            # If we don't use sentence weighting, then every doc has an equal chance to be chosen
-            sampled_doc_index = (current_idx + randrange(1, len(self.table_ids))) % len(self.table_ids)
-        assert sampled_doc_index != current_idx
-        if self.reduce_memory:
-            return self.document_shelf[str(sampled_doc_index)]
-        else:
-            return self.documents[sampled_doc_index]
-
     def __len__(self):
         return len(self.table_ids)
 
@@ -88,30 +65,34 @@ class TableDatabase:
 
 
 def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
+                                  masked_context_token_prob: float, mask_column_token_prob: float,
                                   max_context_length: int,
                                   max_sequence_length: int,
                                   max_predictions_per_seq: int,
-                                  masked_lm_prob: float,
                                   column_delimiter: str,
-                                  vocab_list: Dict) -> List[Dict]:
+                                  vocab_list: list) -> List[Dict]:
     example = doc_database[example_idx]
     # Account for [CLS], [SEP], [SEP]
 
     context = example.context  # assume it's a list of tokenized sentence
     selected_context = []
     for i in reversed(range(0, len(context))):
-        if len(selected_context) + len(context) <= max_context_length:
-            selected_context.extend(context[i])
-        else:
-            break
+        sent = context[i]
+        selected_context = sent + selected_context
+
+        if len(selected_context) > max_context_length:
+            selected_context = selected_context[-max_context_length:]  # only keep context close to the table
 
     assert len(selected_context) > 0
 
     tokens_a = ['[CLS]'] + selected_context + ['[SEP]']
     # segment_ids = [0] * len(sequence)
-    cand_indices = list(range(1, len(tokens_a) - 1))
+    context_cand_indices = list(range(1, len(tokens_a) - 1))
+
     tokens_b = []
-    max_table_token_length = max_sequence_length - len(tokens_a)
+    column_cand_indices = []
+
+    max_table_token_length = max_sequence_length - len(tokens_a) - 1  # account for ending [SEP]
     col_start_idx = len(tokens_a)
     for col_id, column in enumerate(example.header):
         col_tokens = list(column.name_tokens)
@@ -123,22 +104,26 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
         col_tokens += ['('] + column.sample_value_tokens[:5] + [')']
         col_tokens += [column_delimiter]
 
-        if len(tokens_b) + len(col_tokens) <= max_table_token_length:
-            tokens_b += col_tokens
+        _col_cand_indices = col_name_indices + [col_type_idx]
 
-            cand_indices.extend(col_name_indices)
-            cand_indices.append(col_type_idx)
-        else:
+        tokens_b += col_tokens
+        column_cand_indices.extend(_col_cand_indices)
+
+        if len(tokens_b) >= max_table_token_length:
+            tokens_b = tokens_b[:max_table_token_length]
+            column_cand_indices = [idx for idx in column_cand_indices if idx < max_sequence_length - 1]
+
             break
 
         col_start_idx += len(col_tokens)
 
     del tokens_b[-1]  # remove last delimiter
-    sequence = tokens_a + tokens_b + ['SEP']
+    sequence = tokens_a + tokens_b + ['[SEP]']
     segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b) + [1]
 
-    masked_sequence, masked_lm_positions, masked_lm_labels = create_masked_lm_predictions(sequence, cand_indices,
-                                                                                          masked_lm_prob, max_predictions_per_seq, vocab_list)
+    masked_sequence, masked_lm_positions, masked_lm_labels = create_masked_lm_predictions(sequence, context_cand_indices, column_cand_indices,
+                                                                                          masked_context_token_prob, mask_column_token_prob,
+                                                                                          max_predictions_per_seq, vocab_list)
 
     instance = {
         "tokens": masked_sequence,
@@ -150,16 +135,34 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
     return [instance]
 
 
-def create_masked_lm_predictions(tokens, cand_indices, masked_lm_prob, max_predictions_per_seq, vocab_list):
+def create_masked_lm_predictions(tokens, context_indices, column_indices,
+                                 masked_context_token_prob, mask_column_token_prob,
+                                 max_predictions_per_seq, vocab_list):
     """Creates the predictions for the masked LM objective. This is mostly copied from the Google BERT repo, but
     with several refactors to clean it up and remove a lot of unnecessary variables."""
 
-    num_to_mask = min(max_predictions_per_seq,
-                      max(1, int(round(len(tokens) * masked_lm_prob))))
-    shuffle(cand_indices)
-    mask_indices = sorted(sample(cand_indices, num_to_mask))
+    # mask `mask_column_token_prob` of tokens in columns
+    # mask `masked_lm_prob` of tokens in NL context
+
+    num_column_tokens_to_mask = min(max_predictions_per_seq,
+                                    max(2, int(round(len(column_indices) * mask_column_token_prob))))
+    max_context_token_to_mask = max_predictions_per_seq - num_column_tokens_to_mask
+    num_context_tokens_to_mask = min(max_context_token_to_mask,
+                                     max(1, int(round(len(context_indices) * masked_context_token_prob))))
+
+    shuffle(column_indices)
+    masked_column_token_indices = sorted(sample(column_indices, num_column_tokens_to_mask))
+
+    if num_context_tokens_to_mask:
+        shuffle(context_indices)
+        masked_context_token_indices = sorted(sample(context_indices, num_context_tokens_to_mask))
+        masked_indices = sorted(masked_context_token_indices + masked_column_token_indices)
+    else:
+        masked_indices = masked_column_token_indices
+
     masked_token_labels = []
-    for index in mask_indices:
+
+    for index in masked_indices:
         # 80% of the time, replace with [MASK]
         if random() < 0.8:
             masked_token = "[MASK]"
@@ -174,7 +177,7 @@ def create_masked_lm_predictions(tokens, cand_indices, masked_lm_prob, max_predi
         # Once we've saved the true label for that token, we can overwrite it with the masked version
         tokens[index] = masked_token
 
-    return tokens, mask_indices, masked_token_labels
+    return tokens, masked_indices, masked_token_labels
 
 
 def main():
@@ -191,9 +194,11 @@ def main():
 
     parser.add_argument("--epochs_to_generate", type=int, default=3,
                         help="Number of epochs of data to pregenerate")
-    parser.add_argument("--max_seq_len", type=int, default=256)
-    parser.add_argument("--max_context_len", type=int, default=128)
-    parser.add_argument("--masked_lm_prob", type=float, default=0.15,
+    parser.add_argument("--max_seq_len", type=int, default=512)
+    parser.add_argument("--max_context_len", type=int, default=256)
+    parser.add_argument("--masked_context_prob", type=float, default=0.15,
+                        help="Probability of masking each token for the LM task")
+    parser.add_argument("--masked_column_prob", type=float, default=0.20,
                         help="Probability of masking each token for the LM task")
     parser.add_argument("--max_predictions_per_seq", type=int, default=20,
                         help="Maximum number of tokens to mask in each sequence")
@@ -209,6 +214,11 @@ def main():
             for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
                 entry = json.loads(line)
                 example = Example.from_dict(entry, tokenizer, suffix=lind_id)
+
+                # TODO: move this to data pre-processing
+                if any(len(col.name.split(' ')) > 10 for col in example.header):
+                    continue
+
                 table_db.add_table(example)
 
         args.output_dir.mkdir(exist_ok=True)
@@ -221,7 +231,8 @@ def main():
                     doc_instances = create_instance_from_document(
                         table_db, example_idx,
                         max_context_length=args.max_context_len, max_sequence_length=args.max_seq_len,
-                        masked_lm_prob=args.masked_lm_prob, max_predictions_per_seq=args.max_predictions_per_seq,
+                        max_predictions_per_seq=args.max_predictions_per_seq,
+                        masked_context_token_prob=args.masked_context_prob, mask_column_token_prob=args.masked_column_prob,
                         column_delimiter=args.column_delimiter, vocab_list=vocab_list)
                     doc_instances = [json.dumps(instance) for instance in doc_instances]
                     for instance in doc_instances:

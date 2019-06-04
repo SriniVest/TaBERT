@@ -223,28 +223,51 @@ def main():
 
         args.output_dir.mkdir(exist_ok=True)
 
-        for epoch in trange(args.epochs_to_generate, desc='Epoch'):
-            epoch_filename = args.output_dir / f"epoch_{epoch}.json"
-            num_instances = 0
-            with epoch_filename.open('w') as epoch_file:
-                for example_idx in trange(len(table_db), desc="Document"):
-                    doc_instances = create_instance_from_document(
-                        table_db, example_idx,
+        # generate train and dev split
+        example_indices = list(range(len(table_db)))
+        shuffle(example_indices)
+        dev_size = int(len(table_db) * 0.1)
+        train_indices = example_indices[:-dev_size]
+        dev_indices = example_indices[-dev_size:]
+
+        (args.output_dir / 'train').mkdir()
+        (args.output_dir / 'dev').mkdir()
+
+        def _create_instances(_idx):
+            return create_instance_from_document(
+                        table_db, _idx,
                         max_context_length=args.max_context_len, max_sequence_length=args.max_seq_len,
                         max_predictions_per_seq=args.max_predictions_per_seq,
                         masked_context_token_prob=args.masked_context_prob, mask_column_token_prob=args.masked_column_prob,
                         column_delimiter=args.column_delimiter, vocab_list=vocab_list)
+
+        def _generate_for_epoch(_indices, _epoch_file, _metrics_file):
+            num_instances = 0
+            with _epoch_file.open('w') as f:
+                for example_idx in tqdm(_indices, desc="Document"):
+                    doc_instances = _create_instances(example_idx)
                     doc_instances = [json.dumps(instance) for instance in doc_instances]
+
                     for instance in doc_instances:
-                        epoch_file.write(instance + '\n')
+                        f.write(instance + '\n')
                         num_instances += 1
-            metrics_file = args.output_dir / f"epoch_{epoch}_metrics.json"
-            with metrics_file.open('w') as metrics_file:
+
+            with _metrics_file.open('w') as f:
                 metrics = {
                     "num_training_examples": num_instances,
                     "max_seq_len": args.max_seq_len
                 }
-                metrics_file.write(json.dumps(metrics))
+                f.write(json.dumps(metrics))
+
+        # generate dev data first
+        dev_file = args.output_dir / 'dev' / 'epoch_0.json'
+        dev_metrics_file = args.output_dir / 'dev' / "epoch_0_metrics.json"
+        _generate_for_epoch(dev_indices, dev_file, dev_metrics_file)
+
+        for epoch in trange(args.epochs_to_generate, desc='Epoch'):
+            epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}.json"
+            metrics_file = args.output_dir / 'train' / f"epoch_{epoch}_metrics.json"
+            _generate_for_epoch(train_indices, epoch_filename, metrics_file)
 
 
 if __name__ == '__main__':

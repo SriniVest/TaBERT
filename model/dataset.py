@@ -161,50 +161,83 @@ class Column(object):
         self.type = type
         self.sample_value = sample_value
 
+        self.fields = []
         for key, val in kwargs.items():
+            self.fields.append(key)
             setattr(self, key, val)
+
+    def to_dict(self):
+        data = {
+            'name': self.name,
+            'type': self.type,
+            'sample_value': self.sample_value,
+        }
+
+        for key in self.fields:
+            data[key] = getattr(self, key)
+
+        return data
 
 
 class Example(object):
-    def __init__(self, guid, header, context, data=None, **kwargs):
-        self.guid = guid
+    def __init__(self, uuid, header, context, column_data=None, **kwargs):
+        self.uuid = uuid
         self.header = header
         self.context = context
-        self.data = data
+        self.column_data = column_data
 
         for key, val in kwargs.items():
             setattr(self, key, val)
+
+    def serialize(self):
+        example = {
+            'uuid': self.uuid,
+            'source': self.source,
+            'context': self.context,
+            'column_data': self.column_data,
+            'header': [x.to_dict() for x in self.header]
+        }
+
+        return example
+
+    @classmethod
+    def from_serialized(cls, data) -> 'Example':
+        header = [Column(**x) for x in data['header']]
+        data['header'] = header
+        return Example(**data)
 
     @classmethod
     def from_dict(cls, entry: Dict, tokenizer, suffix) -> 'Example':
         def _get_data_source():
             return 'common_crawl' if 'context_before' in entry else 'wiki'
 
-        data = OrderedDict()
         source = _get_data_source()
 
         header_entry = entry['header'] if source == 'wiki' else entry['table']['header']
         header = []
-        for col_data in header_entry:
-            sample_value = col_data['sample_value']['value']
-            column = Column(col_data['name'],
-                            col_data['type'],
+        column_data = []
+        for col in header_entry:
+            sample_value = col['sample_value']['value']
+            column = Column(col['name'],
+                            col['type'],
                             sample_value,
-                            name_tokens=tokenizer.tokenize(col_data['name']),
-                            type_tokens=tokenizer.tokenize(col_data['type']),
-                            sample_value_tokens=tokenizer.tokenize(sample_value))
+                            name_tokens=tokenizer.tokenize(col['name']))
             header.append(column)
 
         if source == 'wiki':
             for row in entry['data'][1:]:
                 for col_id, (tag, cell_val) in enumerate(row):
-                    col_name = header[col_id].name
-                    data.setdefault(col_name, []).append(cell_val)
+                    if col_id >= len(column_data):
+                        column_data.append([])
+
+                    column_data[col_id].append(cell_val)
         else:
             for row in entry['table']['rows']:
                 for col_id, (cell_val) in enumerate(row):
-                    col_name = header[col_id].name
-                    data.setdefault(col_name, []).append(cell_val)
+                    if col_id >= len(column_data):
+                        column_data.append([])
+
+                    column_data[col_id].append(cell_val)
 
         context_before = []
         context_after = []
@@ -233,5 +266,5 @@ class Example(object):
 
         return cls(uuid, header,
                    [context_before, context_after],
-                   data=data,
+                   column_data=column_data,
                    source=source)

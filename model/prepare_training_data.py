@@ -18,9 +18,6 @@ from pytorch_pretrained_bert import *
 from model.dataset import Example
 
 
-tokenizer: BertTokenizer = None
-
-
 class TableDatabase:
     def __init__(self, reduce_memory=False):
         if reduce_memory:
@@ -40,6 +37,90 @@ class TableDatabase:
         self.cumsum_max = None
         self.reduce_memory = reduce_memory
 
+    @staticmethod
+    def __load_process(file, job_queue, num_workers):
+        cnt = 0
+        with file.open() as f:
+            for line in f:
+                job_queue.put(line)
+                cnt += 1
+                # if cnt % 10000 == 0:
+                #     print(f'read {cnt} examples')
+                #     sys.stdout.flush()
+
+        for _ in range(num_workers):
+            job_queue.put(None)
+
+    @staticmethod
+    def __example_worker_process(job_queue, example_queue, tokenizer):
+        job = job_queue.get()
+        cnt = 0
+        while job:
+            example = Example.from_dict(json.loads(job), tokenizer, suffix=None)
+            data = example.serialize()
+            example_queue.put(data)
+
+            job = job_queue.get()
+
+            cnt += 1
+            # if cnt % 1000 == 0:
+            #     print(f'[__example_worker_process] read {cnt} examples')
+            #     sys.stdout.flush()
+
+        example_queue.put(None)
+
+    @classmethod
+    def from_jsonl(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
+        file_path = Path(file_path)
+        db = cls()
+
+        job_queue = multiprocessing.Queue(maxsize=10000)
+        example_queue = multiprocessing.Queue(maxsize=10000)
+        num_workers = multiprocessing.cpu_count()
+
+        reader = multiprocessing.Process(target=cls.__load_process, args=(file_path, job_queue, num_workers), daemon=True)
+        reader.start()
+
+        workers = []
+        for _ in range(num_workers):
+            worker = multiprocessing.Process(target=cls.__example_worker_process,
+                                             args=(job_queue, example_queue, tokenizer),
+                                             daemon=True)
+            worker.start()
+            workers.append(worker)
+
+        stop_count = 0
+        cnt = 0
+        with tqdm(desc="Loading Dataset", unit=" entries") as pbar:
+            while True:
+                data = example_queue.get()
+
+                if data is None:
+                    stop_count += 1
+                    if stop_count == num_workers: break
+                    else: continue
+                else: pbar.update(1)
+
+                example = Example.from_serialized(data)
+                # TODO: move this to data pre-processing
+                if any(len(col.name.split(' ')) > 10 for col in example.header):
+                    continue
+
+                db.add_table(example)
+                cnt += 1
+                if cnt % 10000 == 0:
+                    print(f'load {cnt} examples')
+                    sys.stdout.flush()
+
+                # print(f'[Main] {example_queue.qsize()}')
+                sys.stdout.flush()
+
+        reader.join()
+        for worker in workers:
+            worker.join()
+
+        return db
+
     def add_table(self, table):
         if not table:
             return
@@ -47,7 +128,7 @@ class TableDatabase:
             self.document_shelf[table.guid] = table
         else:
             self.documents.append(table)
-        self.table_ids.append(table.guid)
+        self.table_ids.append(table.uuid)
 
     def __len__(self):
         return len(self.table_ids)
@@ -115,7 +196,7 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
         col_tokens += ['('] + [column.type] + [')']
         col_type_idx = col_start_idx + len(column.name_tokens) + 1
 
-        col_values = example.data[column.name]
+        col_values = example.column_data[col_id]
         # print(col_values)
         col_values = [val for val in col_values if val is not None and len(val) > 0]
         sampled_value = choice(col_values)
@@ -202,10 +283,6 @@ def create_masked_lm_predictions(tokens, context_indices, column_indices,
     return tokens, masked_indices, masked_token_labels
 
 
-def load_example_from_string(str_data):
-    return Example.from_dict(json.loads(str_data), tokenizer, None)
-
-
 def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, required=True)
@@ -238,30 +315,19 @@ def main():
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     vocab_list = list(tokenizer.vocab.keys())
 
-    with TableDatabase(reduce_memory=args.reduce_memory) as table_db:
+    with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
 
-        with args.train_corpus.open() as f:
-            with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-                with tqdm(desc="Loading Dataset", unit=" entries") as pbar:
-                    for example in pool.imap_unordered(load_example_from_string, f):
-                        pbar.update(1)
-
-                        # TODO: move this to data pre-processing
-                        if any(len(col.name.split(' ')) > 10 for col in example.header):
-                            continue
-
-                        table_db.add_table(example)
-
-                # for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
-                #     entry = json.loads(line)
-                #     example = Example.from_dict(entry, tokenizer, suffix=lind_id)
-                #
-                #     # TODO: move this to data pre-processing
-                #     if any(len(col.name.split(' ')) > 10 for col in example.header):
-                #         continue
-                #
-                #     table_db.add_table(example)
+        # with args.train_corpus.open() as f:
+        # for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
+        #     entry = json.loads(line)
+        #     example = Example.from_dict(entry, tokenizer, suffix=lind_id)
+        #
+        #     # TODO: move this to data pre-processing
+        #     if any(len(col.name.split(' ')) > 10 for col in example.header):
+        #         continue
+        #
+        #     table_db.add_table(example)
 
         # generate train and dev split
         example_indices = list(range(len(table_db)))

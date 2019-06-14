@@ -1,6 +1,19 @@
 import re
+import string
 import unicodedata
 from typing import Dict
+
+import spacy
+from spacy.lang.en import English
+
+
+__NON_CHAR_RE = re.compile(rf'[{string.punctuation}]|\w+')
+def split_token_coarse(text):
+    tokens = __NON_CHAR_RE.findall(text)
+    return tokens
+
+
+RE_HTML_TAG = re.compile('<.*?>.*?</.*?>')
 
 
 def clean_cell_value(cell_val):

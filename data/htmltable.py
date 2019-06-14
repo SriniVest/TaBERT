@@ -162,7 +162,7 @@ def remove_columns_by_id(rows, col_id_to_remove):
     return new_rows
 
 
-class WebTable(object):
+class HtmlTable(object):
     NORM_NONE = 0
     NORM_CORNER = 1
     NORM_DUPLICATE = 2
@@ -192,9 +192,9 @@ class WebTable(object):
 
         if remove_hidden:
             self.remove_hidden()
-        if normalization == WebTable.NORM_CORNER:
+        if normalization == HtmlTable.NORM_CORNER:
             self.normalize_table()
-        elif normalization == WebTable.NORM_DUPLICATE:
+        elif normalization == HtmlTable.NORM_DUPLICATE:
             self.normalize_table(deep=True)
 
         self.get_cells()
@@ -204,9 +204,9 @@ class WebTable(object):
         soup = BeautifulSoup(raw_html)
         tables = soup.find_all('table', class_='wikitable')
         if index is None:
-            return [WebTable(x, **kwargs) for x in tables]
+            return [HtmlTable(x, **kwargs) for x in tables]
         else:
-            return WebTable(tables[index], **kwargs)
+            return HtmlTable(tables[index], **kwargs)
 
     def check_hidden(self, tag):
         classes = tag.get('class', [])
@@ -260,7 +260,7 @@ class WebTable(object):
         if deep:
             # Hacky but works
             return BeautifulSoup(str(cell)).contents[0]
-        tag = WebTable.SOUP.new_tag(cell.name)
+        tag = HtmlTable.SOUP.new_tag(cell.name)
         if rowspan > 1:
             tag['rowspan'] = rowspan
         return tag
@@ -420,12 +420,12 @@ def main():
 
     with open(inhtml, 'r', 'utf8') as fin:
         raw = fin.read()
-    table = WebTable.get_wikitable(raw, metadata['tableIndex'],
-                                   normalization=WebTable.NORM_DUPLICATE,
-                                   remove_hidden=(not args.keep_hidden))
+    table = HtmlTable.get_wikitable(raw, metadata['tableIndex'],
+                                    normalization=HtmlTable.NORM_DUPLICATE,
+                                    remove_hidden=(not args.keep_hidden))
     if args.html:
-        raw_table = WebTable.get_wikitable(raw, metadata['tableIndex'],
-                                           remove_hidden=False).table
+        raw_table = HtmlTable.get_wikitable(raw, metadata['tableIndex'],
+                                            remove_hidden=False).table
 
     rows = table.rows
     # rows = list of columns; column = list of cells; cell = (tag, text)

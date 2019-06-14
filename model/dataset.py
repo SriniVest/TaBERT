@@ -166,17 +166,26 @@ class Column(object):
 
 
 class Example(object):
-    def __init__(self, guid, header, context, data=None):
+    def __init__(self, guid, header, context, data=None, **kwargs):
         self.guid = guid
         self.header = header
         self.context = context
         self.data = data
 
+        for key, val in kwargs.items():
+            setattr(self, key, val)
+
     @classmethod
     def from_dict(cls, entry: Dict, tokenizer, suffix) -> 'Example':
-        header = []
+        def _get_data_source():
+            return 'common_crawl' if 'context_before' in entry else 'wiki'
+
         data = OrderedDict()
-        for col_data in entry['header']:
+        source = _get_data_source()
+
+        header_entry = entry['header'] if source == 'wiki' else entry['table']['header']
+        header = []
+        for col_data in header_entry:
             sample_value = col_data['sample_value']['value']
             column = Column(col_data['name'],
                             col_data['type'],
@@ -186,21 +195,43 @@ class Example(object):
                             sample_value_tokens=tokenizer.tokenize(sample_value))
             header.append(column)
 
-        for row in entry['data'][1:]:
-            for col_id, (tag, cell_val) in enumerate(row):
-                col_name = header[col_id].name
-                data.setdefault(col_name, []).append(cell_val)
+        if source == 'wiki':
+            for row in entry['data'][1:]:
+                for col_id, (tag, cell_val) in enumerate(row):
+                    col_name = header[col_id].name
+                    data.setdefault(col_name, []).append(cell_val)
+        else:
+            for row in entry['table']['rows']:
+                for col_id, (cell_val) in enumerate(row):
+                    col_name = header[col_id].name
+                    data.setdefault(col_name, []).append(cell_val)
 
-        context = []
-        for para in entry['context']:
-            for sent in para:
+        context_before = []
+        context_after = []
+
+        if source == 'wiki':
+            for para in entry['context']:
+                for sent in para:
+                    tokenized_sent = tokenizer.tokenize(sent)
+                    context_before.append(tokenized_sent)
+
+            if entry['caption']:
+                caption = tokenizer.tokenize(entry['caption'])
+                context_before.append(caption)
+
+            uuid = f"{source}_{entry['id']}_{'_'.join(entry['title'])}"
+        else:
+            for sent in entry['context_before']:
                 tokenized_sent = tokenizer.tokenize(sent)
-                context.append(tokenized_sent)
+                context_before.append(tokenized_sent)
 
-        if entry['caption']:
-            caption = tokenizer.tokenize(entry['caption'])
-            context.append(caption)
+            for sent in entry['context_after']:
+                tokenized_sent = tokenizer.tokenize(sent)
+                context_after.append(tokenized_sent)
 
-        guid = f"{entry['id']}_{'_'.join(entry['title'])}_{suffix}"
+            uuid = entry['uuid']
 
-        return cls(guid, header, context, data=data)
+        return cls(uuid, header,
+                   [context_before, context_after],
+                   data=data,
+                   source=source)

@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from pytorch_pretrained_bert.modeling import BertForMaskedLM
 from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.optimization import BertAdam
+from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
 
 import json
 import numpy as np
@@ -20,10 +20,7 @@ from functools import partial
 from model.comm import init_distributed_mode
 from model.dataset import TableDataset
 from model.evaluator import Evaluator
-from model.util import parse_arg
-
-
-logging.getLogger().setLevel(logging.DEBUG)
+from model.util import parse_arg, init_logger
 
 
 def main():
@@ -33,6 +30,7 @@ def main():
         json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
 
     init_distributed_mode(args)
+    logger = init_logger(args)
 
     assert args.train_data.is_dir(), \
         "--train_data should point to the folder of files made by pregenerate_training_data.py!"
@@ -55,7 +53,7 @@ def main():
         num_data_epochs = args.epochs
 
     device = torch.cuda.current_device()
-    logging.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
+    logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
         device, args.local_rank, bool(args.multi_gpu), args.fp16))
 
     if args.gradient_accumulation_steps < 1:
@@ -70,7 +68,7 @@ def main():
     torch.cuda.manual_seed_all(args.seed)
 
     if args.output_dir.is_dir() and list(args.output_dir.iterdir()):
-        logging.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")
+        logger.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
@@ -102,26 +100,41 @@ def main():
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
 
-    optimizer = BertAdam(optimizer_grouped_parameters,
-                         lr=args.learning_rate,
-                         warmup=args.warmup_proportion,
-                         t_total=num_train_optimization_steps)
+    if args.fp16:
+        logger.info('init half-precision training')
+        try:
+            from apex.optimizers import FP16_Optimizer
+            from apex.optimizers import FusedAdam
+        except ImportError:
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+
+        optimizer = FusedAdam(optimizer_grouped_parameters,
+                              lr=args.learning_rate,
+                              bias_correction=False,
+                              max_grad_norm=1.0)
+        if args.loss_scale == 0:
+            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True,
+                                       dynamic_loss_args={'init_scale': args.fp16_init_scale,
+                                                          'scale_window': args.fp16_scale_window,
+                                                          'scale_factor': 2.})
+        else:
+            optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
+
+        warmup_linear = WarmupLinearSchedule(warmup=args.warmup_proportion,
+                                             t_total=num_train_optimization_steps)
+    else:
+        optimizer = BertAdam(optimizer_grouped_parameters,
+                             lr=args.learning_rate,
+                             warmup=args.warmup_proportion,
+                             t_total=num_train_optimization_steps)
 
     global_step = 0
 
-    # setup logger
-    logger = logging.getLogger()
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(f"[Node {args.node_id} | Rank {args.global_rank} | %(asctime)s] %(message)s",
-                                  datefmt='%Y-%m-%d %H:%M:%S')
-    handler.setFormatter(formatter)
-    logger.handlers.clear()
-    logger.addHandler(handler)
-
-    logging.info("***** Running training *****")
-    logging.info(f"  Num examples = {total_train_examples}")
-    logging.info("  Batch size = %d", args.train_batch_size)
-    logging.info("  Num steps = %d", num_train_optimization_steps)
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {total_train_examples}")
+    logger.info("  Batch size = %d", args.train_batch_size)
+    logger.info("  Num steps = %d", num_train_optimization_steps)
     model.train()
 
     # we also partitation the dev set for every local process
@@ -151,7 +164,10 @@ def main():
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
 
-                loss.backward()
+                if args.fp16:
+                    optimizer.backward(loss)
+                else:
+                    loss.backward()
 
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
@@ -160,26 +176,33 @@ def main():
                 mean_loss = tr_loss * args.gradient_accumulation_steps / nb_tr_steps
                 pbar.set_postfix_str(f"Loss: {mean_loss:.5f}")
                 if (step + 1) % args.gradient_accumulation_steps == 0:
+                    if args.fp16:
+                        # modify learning rate with special warm up BERT uses
+                        # if args.fp16 is False, BertAdam is used that handles this automatically
+                        lr_this_step = args.learning_rate * warmup_linear.get_lr(global_step, args.warmup_proportion)
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr_this_step
+
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
 
-            logging.info(f'Epoch {epoch} finished.')
+            logger.info(f'Epoch {epoch} finished.')
 
             if args.is_master:
                 # Save a trained model
-                logging.info("** ** * Saving fine-tuned model ** ** * ")
+                logger.info("** ** * Saving fine-tuned model ** ** * ")
                 model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
                 output_model_file = args.output_dir / f"pytorch_model_epoch{epoch:02d}.bin"
                 torch.save(model_to_save.state_dict(), str(output_model_file))
 
             # perform validation
-            logging.info("** ** * Perform validation ** ** * ")
+            logger.info("** ** * Perform validation ** ** * ")
             dev_results = evaluator.evaluate(model.module if args.multi_gpu else model, dev_set)
 
             if args.is_master:
-                logging.info('** ** * Validation Results ** ** * ')
-                logging.info(f'Epoch {epoch} Validation Results: {dev_results}')
+                logger.info('** ** * Validation Results ** ** * ')
+                logger.info(f'Epoch {epoch} Validation Results: {dev_results}')
 
             # flush logging information to disk
             sys.stderr.flush()

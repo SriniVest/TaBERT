@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import os, sys
 from argparse import ArgumentParser
 from typing import List, Dict
@@ -15,6 +16,9 @@ from random import shuffle, choice, sample, random
 from pytorch_pretrained_bert import *
 
 from model.dataset import Example
+
+
+tokenizer: BertTokenizer = None
 
 
 class TableDatabase:
@@ -75,7 +79,16 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
     example = doc_database[example_idx]
     # Account for [CLS], [SEP], [SEP]
 
-    context = example.context  # assume it's a list of tokenized sentence
+    context_before, context_after = example.context[0], example.context[1]
+    if not context_before:
+        context = context_after[::-1]
+    elif not context_after:
+        context = context_before
+    elif random() < 0.5:
+        context = context_after[::-1]
+    else:
+        context = context_before
+
     selected_context = []
     for i in reversed(range(0, len(context))):
         sent = context[i]
@@ -137,7 +150,8 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
         "tokens": masked_sequence,
         "segment_ids": segment_ids,
         "masked_lm_positions": masked_lm_positions,
-        "masked_lm_labels": masked_lm_labels
+        "masked_lm_labels": masked_lm_labels,
+        "source": example.source
     }
 
     return [instance]
@@ -188,6 +202,10 @@ def create_masked_lm_predictions(tokens, context_indices, column_indices,
     return tokens, masked_indices, masked_token_labels
 
 
+def load_example_from_string(str_data):
+    return Example.from_dict(json.loads(str_data), tokenizer, None)
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, required=True)
@@ -212,24 +230,38 @@ def main():
                         help="Maximum number of tokens to mask in each sequence")
     parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
 
+    parser.add_argument('--no_wiki_tables_from_common_crawl', action='store_true', default=False)
+
     args = parser.parse_args()
 
+    global tokenizer
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     vocab_list = list(tokenizer.vocab.keys())
 
     with TableDatabase(reduce_memory=args.reduce_memory) as table_db:
-        with args.train_corpus.open() as f:
-            for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
-                entry = json.loads(line)
-                example = Example.from_dict(entry, tokenizer, suffix=lind_id)
-
-                # TODO: move this to data pre-processing
-                if any(len(col.name.split(' ')) > 10 for col in example.header):
-                    continue
-
-                table_db.add_table(example)
-
         args.output_dir.mkdir(exist_ok=True, parents=True)
+
+        with args.train_corpus.open() as f:
+            with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+                with tqdm(desc="Loading Dataset", unit=" entries") as pbar:
+                    for example in pool.imap_unordered(load_example_from_string, f):
+                        pbar.update(1)
+
+                        # TODO: move this to data pre-processing
+                        if any(len(col.name.split(' ')) > 10 for col in example.header):
+                            continue
+
+                        table_db.add_table(example)
+
+                # for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
+                #     entry = json.loads(line)
+                #     example = Example.from_dict(entry, tokenizer, suffix=lind_id)
+                #
+                #     # TODO: move this to data pre-processing
+                #     if any(len(col.name.split(' ')) > 10 for col in example.header):
+                #         continue
+                #
+                #     table_db.add_table(example)
 
         # generate train and dev split
         example_indices = list(range(len(table_db)))
@@ -238,8 +270,8 @@ def main():
         train_indices = example_indices[:-dev_size]
         dev_indices = example_indices[-dev_size:]
 
-        (args.output_dir / 'train').mkdir()
-        (args.output_dir / 'dev').mkdir()
+        (args.output_dir / 'train').mkdir(exist_ok=True)
+        (args.output_dir / 'dev').mkdir(exist_ok=True)
 
         def _create_instances(_idx):
             return create_instance_from_document(

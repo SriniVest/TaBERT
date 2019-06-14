@@ -2,6 +2,9 @@ import json
 import logging
 import math
 import subprocess
+import sys
+from collections import OrderedDict
+from typing import Dict
 
 import numpy as np
 import torch
@@ -109,9 +112,9 @@ class TableDataset(Dataset):
 
             indices = set(indices)
 
-        logging.info(f"Loading training examples for epoch {epoch}")
+        logging.info(f"Loading examples from {training_path} for epoch {epoch}")
         with data_file.open() as f:
-            for i, line in enumerate(tqdm(f, total=num_samples, desc="Training examples")):
+            for i, line in enumerate(tqdm(f, total=num_samples, desc="Training examples", file=sys.stdout)):
                 if (not multi_gpu) or (multi_gpu and i in indices):
                     line = line.strip()
                     example = json.loads(line)
@@ -150,3 +153,54 @@ class TableDataset(Dataset):
                 torch.tensor(mask_array.astype(np.int64)),
                 torch.tensor(segment_array.astype(np.int64)),
                 torch.tensor(lm_label_array.astype(np.int64)))
+
+
+class Column(object):
+    def __init__(self, name, type, sample_value=None, **kwargs):
+        self.name = name
+        self.type = type
+        self.sample_value = sample_value
+
+        for key, val in kwargs.items():
+            setattr(self, key, val)
+
+
+class Example(object):
+    def __init__(self, guid, header, context, data=None):
+        self.guid = guid
+        self.header = header
+        self.context = context
+        self.data = data
+
+    @classmethod
+    def from_dict(cls, entry: Dict, tokenizer, suffix) -> 'Example':
+        header = []
+        data = OrderedDict()
+        for col_data in entry['header']:
+            sample_value = col_data['sample_value']['value']
+            column = Column(col_data['name'],
+                            col_data['type'],
+                            sample_value,
+                            name_tokens=tokenizer.tokenize(col_data['name']),
+                            type_tokens=tokenizer.tokenize(col_data['type']),
+                            sample_value_tokens=tokenizer.tokenize(sample_value))
+            header.append(column)
+
+        for row in entry['data'][1:]:
+            for col_id, (tag, cell_val) in enumerate(row):
+                col_name = header[col_id].name
+                data.setdefault(col_name, []).append(cell_val)
+
+        context = []
+        for para in entry['context']:
+            for sent in para:
+                tokenized_sent = tokenizer.tokenize(sent)
+                context.append(tokenized_sent)
+
+        if entry['caption']:
+            caption = tokenizer.tokenize(entry['caption'])
+            context.append(caption)
+
+        guid = f"{entry['id']}_{'_'.join(entry['title'])}_{suffix}"
+
+        return cls(guid, header, context, data=data)

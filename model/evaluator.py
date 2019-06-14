@@ -1,7 +1,9 @@
+import sys
 from functools import partial
 
 import gc
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import logging
 from torch.utils.data import Dataset, DataLoader, SequentialSampler
@@ -12,9 +14,9 @@ import math
 
 
 class Evaluator(object):
-    def __init__(self, args):
+    def __init__(self, batch_size, args):
         self.args = args
-        self.batch_size = args.train_batch_size * 4
+        self.batch_size = batch_size
         self.device = torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu')
 
     def evaluate(self, model: nn.Module, dataset: Dataset) -> Dict:
@@ -31,7 +33,7 @@ class Evaluator(object):
 
             loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
 
-            with tqdm(total=len(data_loader), desc=f"Evaluation") as pbar:
+            with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
                 for step, batch in enumerate(data_loader):
                     batch = tuple(t.to(self.device) for t in batch)
                     input_ids, input_mask, segment_ids, lm_label_ids = batch
@@ -47,6 +49,18 @@ class Evaluator(object):
         if was_training:
             model.train()
 
+        # handel distributed evaluation
+        if self.args.multi_gpu:
+            result_tensor = torch.tensor([cum_loss, num_slots]).to(self.device)
+            gather_list = [torch.zeros(2).to(self.device) for _ in range(dist.get_world_size())]
+            torch.distributed.all_gather(gather_list, result_tensor)
+
+            # if self.args.is_master:
+            #     print([t for t in gather_list])
+
+            cum_loss = sum(x[0].item() for x in gather_list)
+            num_slots = sum(x[1].item() for x in gather_list)
+
         ppl = math.exp(cum_loss / num_slots)
 
-        return {'ppl': ppl}
+        return {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}

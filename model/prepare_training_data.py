@@ -14,7 +14,7 @@ from random import shuffle, choice, sample, random
 
 from pytorch_pretrained_bert import *
 
-from model.table import Example
+from model.dataset import Example
 
 
 class TableDatabase:
@@ -70,6 +70,7 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
                                   max_sequence_length: int,
                                   max_predictions_per_seq: int,
                                   column_delimiter: str,
+                                  tokenizer: BertTokenizer,
                                   vocab_list: list) -> List[Dict]:
     example = doc_database[example_idx]
     # Account for [CLS], [SEP], [SEP]
@@ -101,7 +102,14 @@ def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
         col_tokens += ['('] + [column.type] + [')']
         col_type_idx = col_start_idx + len(column.name_tokens) + 1
 
-        col_tokens += ['('] + column.sample_value_tokens[:5] + [')']
+        col_values = example.data[column.name]
+        # print(col_values)
+        col_values = [val for val in col_values if val is not None and len(val) > 0]
+        sampled_value = choice(col_values)
+        # print('chosen value', sampled_value)
+        sampled_value_tokens = tokenizer.tokenize(sampled_value)
+
+        col_tokens += ['('] + sampled_value_tokens[:5] + [')']
         col_tokens += [column_delimiter]
 
         _col_cand_indices = col_name_indices + [col_type_idx]
@@ -221,7 +229,7 @@ def main():
 
                 table_db.add_table(example)
 
-        args.output_dir.mkdir(exist_ok=True)
+        args.output_dir.mkdir(exist_ok=True, parents=True)
 
         # generate train and dev split
         example_indices = list(range(len(table_db)))
@@ -239,7 +247,9 @@ def main():
                         max_context_length=args.max_context_len, max_sequence_length=args.max_seq_len,
                         max_predictions_per_seq=args.max_predictions_per_seq,
                         masked_context_token_prob=args.masked_context_prob, mask_column_token_prob=args.masked_column_prob,
-                        column_delimiter=args.column_delimiter, vocab_list=vocab_list)
+                        column_delimiter=args.column_delimiter,
+                        tokenizer=tokenizer,
+                        vocab_list=vocab_list)
 
         def _generate_for_epoch(_indices, _epoch_file, _metrics_file):
             num_instances = 0

@@ -28,6 +28,10 @@ logging.getLogger().setLevel(logging.DEBUG)
 
 def main():
     args = parse_arg()
+
+    with (args.output_dir / 'config.json').open('w') as f:
+        json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
+
     init_distributed_mode(args)
 
     assert args.train_data.is_dir(), \
@@ -108,7 +112,8 @@ def main():
     # setup logger
     logger = logging.getLogger()
     handler = logging.StreamHandler()
-    formatter = logging.Formatter(f"[Rank {args.local_rank}]: %(message)s")
+    formatter = logging.Formatter(f"[Node {args.node_id} | Rank {args.global_rank} | %(asctime)s] %(message)s",
+                                  datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
     logger.handlers.clear()
     logger.addHandler(handler)
@@ -119,13 +124,11 @@ def main():
     logging.info("  Num steps = %d", num_train_optimization_steps)
     model.train()
 
-    evaluator = dev_set = None
-    if args.is_master:
-        # we load the same dev set for every local process
-        dev_set = TableDataset(epoch=0, training_path=args.dev_data, tokenizer=tokenizer, num_data_epochs=1,
-                               reduce_memory=args.reduce_memory, multi_gpu=False)
+    # we also partitation the dev set for every local process
+    dev_set = TableDataset(epoch=0, training_path=args.dev_data, tokenizer=tokenizer, num_data_epochs=1,
+                           reduce_memory=args.reduce_memory, multi_gpu=args.multi_gpu)
 
-        evaluator = Evaluator(args)
+    evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
 
     for epoch in range(args.epochs):
         epoch_dataset = TableDataset(epoch=epoch, training_path=args.train_data, tokenizer=tokenizer,
@@ -139,7 +142,7 @@ def main():
                                       collate_fn=partial(epoch_dataset.collate, tokenizer=tokenizer))
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
-        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}") as pbar:
+        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}", file=sys.stdout) as pbar:
             for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids = batch
@@ -170,19 +173,22 @@ def main():
                 output_model_file = args.output_dir / f"pytorch_model_epoch{epoch:02d}.bin"
                 torch.save(model_to_save.state_dict(), str(output_model_file))
 
-                # perform validation
-                logging.info("** ** * Perform validation ** ** * ")
-                dev_scores = evaluator.evaluate(model.module if args.multi_gpu else model, dev_set)
+            # perform validation
+            logging.info("** ** * Perform validation ** ** * ")
+            dev_results = evaluator.evaluate(model.module if args.multi_gpu else model, dev_set)
+
+            if args.is_master:
                 logging.info('** ** * Validation Results ** ** * ')
-                logging.info(f'Epoch {epoch} Validation Results: {dev_scores}')
+                logging.info(f'Epoch {epoch} Validation Results: {dev_results}')
 
-                # flush logging information to disk
-                sys.stderr.flush()
+            # flush logging information to disk
+            sys.stderr.flush()
 
-            # let other processes wait for the main process to finish validation
-            logging.info("Syncing over all processes")
-            torch.distributed.barrier()
-            logging.info("Syncing over all processes done!")
+            # if args.multi_gpu:
+            #     # let other processes wait for the main process to finish validation
+            #     logging.info("Syncing over all processes")
+            #     torch.distributed.barrier()
+            #     logging.info("Syncing over all processes done!")
 
 
 if __name__ == '__main__':

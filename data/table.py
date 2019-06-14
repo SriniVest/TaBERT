@@ -2,8 +2,7 @@ import re
 from typing import List
 
 from data import data_utils
-from model.table import Column
-
+from model.dataset import Column
 
 TABLE_MIN_ROW_NUM = 3
 TABLE_MIN_COL_NUM = 2

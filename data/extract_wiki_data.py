@@ -11,7 +11,7 @@ import spacy
 from tqdm import tqdm
 import wikitextparser as wtq
 from data.WikiExtractor import pages_from, options, tagRE, Extractor, ignoreTag
-from data.webtable import *
+from data.htmltable import *
 
 # os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/jdk-12.0.1.jdk/Contents/Home'
 # os.environ['CLASSPATH'] = '/Users/pengcheng/Projects/tableBERT/target/tableBERT-1.0-SNAPSHOT-jar-with-dependencies.jar'
@@ -27,7 +27,7 @@ def wiki2text(wiki_text):
     return text
 
 
-def is_valid_table(table: WebTable) -> bool:
+def is_valid_table(table: HtmlTable) -> bool:
     # check the size of the table
     if table.num_cols < 3 or table.num_rows < 4:
         return False
@@ -140,7 +140,7 @@ class TableExtractor(multiprocessing.Process):
         # if wiki_page.tables:
         #     table_count += len(wiki_page.tables)
 
-    def extract_table_data(self, table_html: str) -> Optional[WebTable]:
+    def extract_table_data(self, table_html: str) -> Optional[HtmlTable]:
         soup_doc = BeautifulSoup(table_html).find(class_='wikitable') # type: BeautifulSoupOriginal
         if soup_doc is None:
             return None
@@ -149,9 +149,9 @@ class TableExtractor(multiprocessing.Process):
         if soup_doc.find('table'):
             return None
 
-        table = WebTable(soup_doc,
-                         normalization=WebTable.NORM_DUPLICATE,
-                         first_row_as_caption=True)
+        table = HtmlTable(soup_doc,
+                          normalization=HtmlTable.NORM_DUPLICATE,
+                          first_row_as_caption=True)
 
         table.clean()
         if not is_valid_table(table):

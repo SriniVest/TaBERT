@@ -23,6 +23,8 @@ def parse_arg():
     parser.add_argument("--bert_model", type=str, required=True,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                              "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.")
+    parser.add_argument('--no_init', action='store_true', default=False)
+    parser.add_argument('--config_file', type=str, help='model config file if do not use pre-trained BERT model.')
     parser.add_argument("--do_lower_case", action="store_true")
 
     # distributed training

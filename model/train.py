@@ -9,7 +9,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from pytorch_pretrained_bert.modeling import BertForMaskedLM
+from pytorch_pretrained_bert.modeling import BertForMaskedLM, BertConfig
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
 
@@ -84,7 +84,12 @@ def main():
         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
     # Prepare model
-    model = BertForMaskedLM.from_pretrained(args.bert_model)
+    if args.no_init:
+        assert args.config_file is not None
+        model = BertForMaskedLM(BertConfig.from_json_file(args.config_file))
+    else:
+        model = BertForMaskedLM.from_pretrained(args.bert_model)
+
     if args.fp16:
         model = model.half()
 

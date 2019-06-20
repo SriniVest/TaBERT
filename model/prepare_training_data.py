@@ -1,8 +1,11 @@
 import json
 import multiprocessing
 import os, sys
+import time
+import traceback
 from argparse import ArgumentParser
 from typing import List, Dict
+import zmq
 
 import numpy as np
 
@@ -70,7 +73,7 @@ class TableDatabase:
         example_queue.put(None)
 
     @classmethod
-    def from_jsonl(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
+    def from_jsonl_queue(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
         file_path = Path(file_path)
         db = cls()
 
@@ -91,7 +94,7 @@ class TableDatabase:
 
         stop_count = 0
         cnt = 0
-        with tqdm(desc="Loading Dataset", unit=" entries") as pbar:
+        with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
             while True:
                 data = example_queue.get()
 
@@ -118,6 +121,111 @@ class TableDatabase:
         reader.join()
         for worker in workers:
             worker.join()
+
+        return db
+
+    @staticmethod
+    def __load_process_zmq(file, num_workers):
+        context = zmq.Context()
+        job_sender = context.socket(zmq.PUSH)
+        job_sender.setsockopt(zmq.LINGER, -1)
+        job_sender.bind("tcp://127.0.0.1:5557")
+
+        cnt = 0
+        with file.open() as f:
+            for line in f:
+                job_sender.send_string(line)
+                # if cnt % 10000 == 0:
+                #     print(f'read {cnt} examples')
+                #     sys.stdout.flush()
+
+        for _ in range(num_workers):
+            job_sender.send_string('')
+
+        time.sleep(600)
+
+    @staticmethod
+    def __example_worker_process_zmq(tokenizer):
+        context = zmq.Context()
+        job_receiver = context.socket(zmq.PULL)
+        job_receiver.setsockopt(zmq.LINGER, -1)
+        job_receiver.connect("tcp://127.0.0.1:5557")
+
+        example_sender = context.socket(zmq.PUSH)
+        example_sender.setsockopt(zmq.LINGER, -1)
+        example_sender.connect("tcp://127.0.0.1:5558")
+
+        cnt = 0
+        while True:
+            job = job_receiver.recv_string()
+            if job:
+                example = Example.from_dict(json.loads(job), tokenizer, suffix=None)
+                data = example.serialize()
+                example_sender.send_pyobj(data)
+            else:
+                example_sender.send_pyobj(None)
+
+            cnt += 1
+            # if cnt % 1000 == 0:
+            #     print(f'[__example_worker_process] read {cnt} examples')
+            #     sys.stdout.flush()
+
+    @classmethod
+    def from_jsonl(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
+        file_path = Path(file_path)
+        db = cls()
+
+        num_workers = multiprocessing.cpu_count()
+
+        reader = multiprocessing.Process(target=cls.__load_process_zmq, args=(file_path, num_workers),
+                                         daemon=True)
+
+        context = zmq.Context()
+        example_receiver = context.socket(zmq.PULL)
+        example_receiver.setsockopt(zmq.LINGER, -1)
+        example_receiver.bind("tcp://*:5558")
+
+        workers = []
+        for _ in range(num_workers):
+            worker = multiprocessing.Process(target=cls.__example_worker_process_zmq,
+                                             args=(tokenizer,),
+                                             daemon=True)
+            worker.start()
+            workers.append(worker)
+
+        reader.start()
+
+        stop_count = 0
+        with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
+            while True:
+                data = example_receiver.recv_pyobj()
+
+                if data is None:
+                    stop_count += 1
+                    print(f'{stop_count} worker stoped!')
+                    if stop_count == num_workers:
+                        break
+                    else:
+                        continue
+                else:
+                    pbar.update(1)
+
+                example = Example.from_serialized(data)
+                # TODO: move this to data pre-processing
+                if any(len(col.name.split(' ')) > 10 for col in example.header):
+                    continue
+
+                db.add_table(example)
+
+                # print(f'[Main] {example_queue.qsize()}')
+                sys.stdout.flush()
+
+        # reader.join()
+        # for worker in workers:
+        #     worker.join()
+        reader.terminate()
+        for worker in workers:
+            worker.terminate()
 
         return db
 
@@ -332,7 +440,7 @@ def main():
         # generate train and dev split
         example_indices = list(range(len(table_db)))
         shuffle(example_indices)
-        dev_size = int(len(table_db) * 0.1)
+        dev_size = min(int(len(table_db) * 0.1), 500000)
         train_indices = example_indices[:-dev_size]
         dev_indices = example_indices[-dev_size:]
 
@@ -352,8 +460,19 @@ def main():
         def _generate_for_epoch(_indices, _epoch_file, _metrics_file):
             num_instances = 0
             with _epoch_file.open('w') as f:
-                for example_idx in tqdm(_indices, desc="Document"):
-                    doc_instances = _create_instances(example_idx)
+                for example_idx in tqdm(_indices, desc="Document", file=sys.stdout):
+                    try:
+                        doc_instances = _create_instances(example_idx)
+                    except:
+                        typ, value, tb = sys.exc_info()
+                        print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+                        print(table_db[example_idx].serialize(), file=sys.stderr)
+                        print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
+                        traceback.print_exc(file=sys.stderr)
+                        print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+
+                        continue
+
                     doc_instances = [json.dumps(instance) for instance in doc_instances]
 
                     for instance in doc_instances:

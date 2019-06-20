@@ -1,6 +1,7 @@
 import logging
 from argparse import ArgumentParser
 from pathlib import Path
+import torch
 
 
 def parse_arg():
@@ -25,6 +26,7 @@ def parse_arg():
     parser.add_argument("--do_lower_case", action="store_true")
 
     # distributed training
+    parser.add_argument("--ddp_backend", type=str, default='pytorch', choices=['pytorch', 'apex'])
     parser.add_argument("--local_rank",
                         type=int,
                         default=-1,
@@ -52,6 +54,9 @@ def parse_arg():
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
+    parser.add_argument('--fp16_init_scale', type=float, default=128)
+    parser.add_argument('--fp16_scale_window', type=int, default=1000)
+
     parser.add_argument("--warmup_proportion",
                         default=0.1,
                         type=float,
@@ -63,6 +68,7 @@ def parse_arg():
                         help="The initial learning rate for Adam.")
 
     args = parser.parse_args()
+
     return args
 
 

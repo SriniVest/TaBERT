@@ -85,14 +85,24 @@ def main():
 
     # Prepare model
     model = BertForMaskedLM.from_pretrained(args.bert_model)
+    if args.fp16:
+        model = model.half()
+
     model = model.to(device)
     if args.multi_gpu:
-        model = nn.parallel.DistributedDataParallel(model,
-                                                    find_unused_parameters=True,
-                                                    device_ids=[args.local_rank], output_device=args.local_rank)
+        if args.ddp_backend == 'pytorch':
+            model = nn.parallel.DistributedDataParallel(model,
+                                                        find_unused_parameters=True,
+                                                        device_ids=[args.local_rank], output_device=args.local_rank)
+        else:
+            import apex
+            model = apex.parallel.DistributedDataParallel(model, delay_allreduce=True)
 
     # Prepare optimizer
-    param_optimizer = list(model.named_parameters())
+    no_grad = ['pooler']
+    param_optimizer = list([(p_name, p)
+                            for (p_name, p) in model.named_parameters()
+                            if not any(pn in p_name for pn in no_grad)])
     no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
@@ -114,10 +124,11 @@ def main():
                               bias_correction=False,
                               max_grad_norm=1.0)
         if args.loss_scale == 0:
-            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True,
-                                       dynamic_loss_args={'init_scale': args.fp16_init_scale,
-                                                          'scale_window': args.fp16_scale_window,
-                                                          'scale_factor': 2.})
+            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+
+            # dynamic_loss_args={'init_scale': args.fp16_init_scale,
+            #                                                           'scale_window': args.fp16_scale_window,
+            #                                                           'scale_factor': 2.}
         else:
             optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
 

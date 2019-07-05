@@ -3,8 +3,12 @@ import multiprocessing
 import os, sys
 import time
 import traceback
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
+from multiprocessing import connection
+from types import SimpleNamespace
 from typing import List, Dict
+
+import gc
 import zmq
 
 import numpy as np
@@ -19,6 +23,10 @@ from random import shuffle, choice, sample, random
 from pytorch_pretrained_bert import *
 
 from model.dataset import Example
+
+
+TRAIN_INSTANCE_QUEUE_ADDRESS = 'tcp://127.0.0.1:5560'
+EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:5561'
 
 
 class TableDatabase:
@@ -257,15 +265,14 @@ class TableDatabase:
             self.temp_dir.cleanup()
 
 
-def create_instance_from_document(doc_database: TableDatabase, example_idx: int,
-                                  masked_context_token_prob: float, mask_column_token_prob: float,
-                                  max_context_length: int,
-                                  max_sequence_length: int,
-                                  max_predictions_per_seq: int,
-                                  column_delimiter: str,
-                                  tokenizer: BertTokenizer,
-                                  vocab_list: list) -> List[Dict]:
-    example = doc_database[example_idx]
+def create_training_instances_from_example(example: Example,
+                                           masked_context_token_prob: float, mask_column_token_prob: float,
+                                           max_context_length: int,
+                                           max_sequence_length: int,
+                                           max_predictions_per_seq: int,
+                                           column_delimiter: str,
+                                           tokenizer: BertTokenizer,
+                                           vocab_list: list) -> List[Dict]:
     # Account for [CLS], [SEP], [SEP]
 
     context_before, context_after = example.context[0], example.context[1]
@@ -391,6 +398,134 @@ def create_masked_lm_predictions(tokens, context_indices, column_indices,
     return tokens, masked_indices, masked_token_labels
 
 
+def generate_train_instance_from_example(args: Namespace):
+    context = zmq.Context()
+    example_receiver = context.socket(zmq.PULL)
+    # example_receiver.setsockopt(zmq.LINGER, -1)
+    example_receiver.connect(EXAMPLE_QUEUE_ADDRESS)
+
+    instance_sender = context.socket(zmq.PUSH)
+    # instance_sender.setsockopt(zmq.LINGER, -1)
+    instance_sender.connect(TRAIN_INSTANCE_QUEUE_ADDRESS)
+
+    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
+    vocab_list = list(tokenizer.vocab.keys())
+
+    # print('started queues')
+
+    while True:
+        job = example_receiver.recv_pyobj()
+        if job:
+            example = Example.from_serialized(job)
+            # print('get one example')
+            try:
+                instances = create_training_instances_from_example(
+                    example,
+                    max_context_length=args.max_context_len,
+                    max_sequence_length=args.max_seq_len,
+                    max_predictions_per_seq=args.max_predictions_per_seq,
+                    masked_context_token_prob=args.masked_context_prob,
+                    mask_column_token_prob=args.masked_column_prob,
+                    column_delimiter=args.column_delimiter,
+                    tokenizer=tokenizer,
+                    vocab_list=vocab_list
+                )
+                for instance in instances:
+                    instance_sender.send_pyobj(json.dumps(instance))
+            except:
+                typ, value, tb = sys.exc_info()
+                print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+                print(example.serialize(), file=sys.stderr)
+                print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+
+                sys.stderr.flush()
+        else:
+            instance_sender.send_pyobj(None)
+
+    while True:
+        time.sleep(10)
+
+
+def write_instance_to_file(output_file: Path, num_workers: int, stat_send: connection.Connection):
+    context = zmq.Context()
+    instance_receiver = context.socket(zmq.PULL)
+    # instance_receiver.setsockopt(zmq.LINGER, -1)
+    instance_receiver.bind(TRAIN_INSTANCE_QUEUE_ADDRESS)
+
+    finished_worker_num = 0
+    num_instances = 0
+    with output_file.open('w') as f:
+        while True:
+            data = instance_receiver.recv_pyobj()
+            if data is not None:
+                f.write(data + os.linesep)
+                num_instances += 1
+                # print('write one example')
+            else:
+                # print('one worker finished')
+                finished_worker_num += 1
+                if finished_worker_num == num_workers:
+                    break
+
+    stat_send.send(num_instances)
+    instance_receiver.close()
+
+
+def generate_for_epoch(table_db: TableDatabase,
+                       indices: List[int],
+                       epoch_file: Path,
+                       metrics_file: Path,
+                       args: Namespace):
+    print(f'Generating {epoch_file}', file=sys.stderr)
+
+    # initialize job sender
+    context = zmq.Context()
+    example_sender = context.socket(zmq.PUSH)
+    # example_sender.setsockopt(zmq.LINGER, -1)
+    example_sender.bind(EXAMPLE_QUEUE_ADDRESS)
+
+    stat_recv, stat_send = multiprocessing.Pipe()
+    num_workers = multiprocessing.cpu_count() - 2
+
+    instance_writer_process = multiprocessing.Process(target=write_instance_to_file,
+                                                      args=(epoch_file, num_workers, stat_send))
+    instance_writer_process.start()
+
+    workers = []
+    for _ in range(num_workers):
+        worker_process = multiprocessing.Process(target=generate_train_instance_from_example,
+                                                 args=(args, ),
+                                                 daemon=True)
+        worker_process.start()
+        workers.append(worker_process)
+
+    for example_idx in tqdm(indices, desc="Document", file=sys.stdout):
+        example = table_db[example_idx]
+        example_sender.send_pyobj(example.serialize())
+        # print('send one example')
+
+    for _ in range(num_workers):
+        example_sender.send_pyobj(None)
+
+    num_instances = stat_recv.recv()
+    print('num instanances:', num_instances)
+    instance_writer_process.join()
+
+    for worker in workers:
+        worker.terminate()
+
+    with metrics_file.open('w') as f:
+        metrics = {
+            "num_training_examples": num_instances,
+            "max_seq_len": args.max_seq_len
+        }
+        f.write(json.dumps(metrics))
+
+    example_sender.close()
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, required=True)
@@ -421,21 +556,9 @@ def main():
 
     global tokenizer
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-    vocab_list = list(tokenizer.vocab.keys())
 
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
-
-        # with args.train_corpus.open() as f:
-        # for lind_id, line in enumerate(tqdm(f, desc="Loading Dataset", unit=" entries")):
-        #     entry = json.loads(line)
-        #     example = Example.from_dict(entry, tokenizer, suffix=lind_id)
-        #
-        #     # TODO: move this to data pre-processing
-        #     if any(len(col.name.split(' ')) > 10 for col in example.header):
-        #         continue
-        #
-        #     table_db.add_table(example)
 
         # generate train and dev split
         example_indices = list(range(len(table_db)))
@@ -447,54 +570,16 @@ def main():
         (args.output_dir / 'train').mkdir(exist_ok=True)
         (args.output_dir / 'dev').mkdir(exist_ok=True)
 
-        def _create_instances(_idx):
-            return create_instance_from_document(
-                        table_db, _idx,
-                        max_context_length=args.max_context_len, max_sequence_length=args.max_seq_len,
-                        max_predictions_per_seq=args.max_predictions_per_seq,
-                        masked_context_token_prob=args.masked_context_prob, mask_column_token_prob=args.masked_column_prob,
-                        column_delimiter=args.column_delimiter,
-                        tokenizer=tokenizer,
-                        vocab_list=vocab_list)
-
-        def _generate_for_epoch(_indices, _epoch_file, _metrics_file):
-            num_instances = 0
-            with _epoch_file.open('w') as f:
-                for example_idx in tqdm(_indices, desc="Document", file=sys.stdout):
-                    try:
-                        doc_instances = _create_instances(example_idx)
-                    except:
-                        typ, value, tb = sys.exc_info()
-                        print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
-                        print(table_db[example_idx].serialize(), file=sys.stderr)
-                        print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
-                        traceback.print_exc(file=sys.stderr)
-                        print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
-
-                        continue
-
-                    doc_instances = [json.dumps(instance) for instance in doc_instances]
-
-                    for instance in doc_instances:
-                        f.write(instance + '\n')
-                        num_instances += 1
-
-            with _metrics_file.open('w') as f:
-                metrics = {
-                    "num_training_examples": num_instances,
-                    "max_seq_len": args.max_seq_len
-                }
-                f.write(json.dumps(metrics))
-
         # generate dev data first
         dev_file = args.output_dir / 'dev' / 'epoch_0.json'
         dev_metrics_file = args.output_dir / 'dev' / "epoch_0_metrics.json"
-        _generate_for_epoch(dev_indices, dev_file, dev_metrics_file)
+        generate_for_epoch(table_db, dev_indices, dev_file, dev_metrics_file, args)
 
         for epoch in trange(args.epochs_to_generate, desc='Epoch'):
+            gc.collect()
             epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}.json"
             metrics_file = args.output_dir / 'train' / f"epoch_{epoch}_metrics.json"
-            _generate_for_epoch(train_indices, epoch_filename, metrics_file)
+            generate_for_epoch(table_db, train_indices, epoch_filename, metrics_file, args)
 
 
 if __name__ == '__main__':

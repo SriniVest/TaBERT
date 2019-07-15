@@ -75,8 +75,8 @@ class TableDataset(Dataset):
     def __init__(self, training_path, epoch, tokenizer, num_data_epochs, reduce_memory=False, multi_gpu=False):
         self.vocab = tokenizer.vocab
         self.tokenizer = tokenizer
-        self.epoch = epoch
-        self.data_epoch = epoch % num_data_epochs
+        self.data_epoch = self.epoch = epoch
+        # self.data_epoch = epoch % num_data_epochs
         data_file = training_path / f"epoch_{self.data_epoch}.json"
         metrics_file = training_path / f"epoch_{self.data_epoch}_metrics.json"
         assert data_file.is_file() and metrics_file.is_file()

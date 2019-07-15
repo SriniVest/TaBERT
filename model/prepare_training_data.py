@@ -10,8 +10,7 @@ from typing import List, Dict
 
 import gc
 import zmq
-from pymemcache.client.base import Client as MemcachedClient
-
+import redis
 import numpy as np
 
 import shelve
@@ -28,15 +27,17 @@ from model.dataset import Example
 
 TRAIN_INSTANCE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15566'
 EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'
-MEMCACHED_SERVER_ADDR = 'localhost'
+DATABASE_SERVER_ADDR = 'localhost'
 
 
 class TableDatabase:
     def __init__(self):
-        self.client = MemcachedClient((MEMCACHED_SERVER_ADDR, 11211))
-        self.client.flush_all()
-
+        self.restore_client()
+        self.client.flushall(asynchronous=False)
         self._cur_index = multiprocessing.Value('i', 0)
+
+    def restore_client(self):
+        self.client = redis.Redis(host='localhost', port=6379, db=0)
 
     @staticmethod
     def __load_process_zmq(file, num_workers):
@@ -58,13 +59,13 @@ class TableDatabase:
             time.sleep(0.1)
 
     @staticmethod
-    def __example_worker_process_zmq(tokenizer, db, worker_status_queue):
+    def __example_worker_process_zmq(tokenizer, db):
         context = zmq.Context()
         job_receiver = context.socket(zmq.PULL)
         job_receiver.setsockopt(zmq.LINGER, -1)
         job_receiver.connect("tcp://127.0.0.1:5557")
 
-        cache_client = MemcachedClient((MEMCACHED_SERVER_ADDR, 11211))
+        cache_client = redis.Redis(host='localhost', port=6379, db=0)
         buffer_size = 20000
 
         def _add_to_cache():
@@ -74,7 +75,7 @@ class TableDatabase:
                     db._cur_index.value = index_end
                 index_start = index_end - len(buffer)
                 values = {str(i): val for i, val in zip(range(index_start, index_end), buffer)}
-                cache_client.set_many(values, noreply=False)
+                cache_client.mset(values)
                 del buffer[:]
 
         cnt = 0
@@ -94,27 +95,18 @@ class TableDatabase:
 
                 if len(buffer) >= buffer_size:
                     _add_to_cache()
-
-                if cnt % 10000 == 0:
-                    worker_status_queue.put('HEART_BEAT')
             else:
                 job_receiver.close()
-                worker_status_queue.put('EXIT')
+                _add_to_cache()
                 break
 
             cnt += 1
-            # if cnt % 1000 == 0:
-            #     print(f'[__example_worker_process] read {cnt} examples')
-            #     sys.stdout.flush()
-
-        _add_to_cache()
 
     @classmethod
     def from_jsonl(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
         file_path = Path(file_path)
         db = cls()
         num_workers = multiprocessing.cpu_count() - 5
-        worker_status_queue = multiprocessing.Queue()
 
         reader = multiprocessing.Process(target=cls.__load_process_zmq, args=(file_path, num_workers),
                                          daemon=True)
@@ -122,7 +114,7 @@ class TableDatabase:
         workers = []
         for _ in range(num_workers):
             worker = multiprocessing.Process(target=cls.__example_worker_process_zmq,
-                                             args=(tokenizer, db, worker_status_queue),
+                                             args=(tokenizer, db),
                                              daemon=True)
             worker.start()
             workers.append(worker)
@@ -133,18 +125,16 @@ class TableDatabase:
         db_size = 0
         with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
             while True:
-                worker_status = worker_status_queue.get()
-                if worker_status == 'HEART_BEAT':
-                    cur_db_size = len(db)
-                    pbar.update(cur_db_size - db_size)
-                    db_size = cur_db_size
-                elif worker_status == 'EXIT':
-                    stop_count += 1
-                    print(f'{stop_count} worker stoped!')
-                    if stop_count == num_workers:
-                        break
-                    else:
-                        continue
+                cur_db_size = len(db)
+                pbar.update(cur_db_size - db_size)
+                db_size = cur_db_size
+
+                all_worker_finished = all(not w.is_alive() for w in workers)
+                if all_worker_finished:
+                    print(f'all workers stoped!')
+                    break
+
+                time.sleep(5)
 
         for worker in workers:
             worker.join()
@@ -168,7 +158,7 @@ class TableDatabase:
         return self
 
     def __exit__(self, exc_type, exc_val, traceback):
-        self.client.close()
+        pass
 
 
 def create_training_instances_from_example(example: Example,
@@ -310,7 +300,7 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
     # instance_sender.setsockopt(zmq.LINGER, -1)
     instance_sender.connect(TRAIN_INSTANCE_QUEUE_ADDRESS)
 
-    table_db.client = MemcachedClient((MEMCACHED_SERVER_ADDR, 11211))
+    table_db.restore_client()
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     vocab_list = list(tokenizer.vocab.keys())
@@ -318,36 +308,36 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
     # print('started queues')
     num_processed = 0
     for idx in indices:
-            example = table_db[idx]
-            # print('get one example')
-            try:
-                instances = create_training_instances_from_example(
-                    example,
-                    max_context_length=args.max_context_len,
-                    max_sequence_length=args.max_seq_len,
-                    max_predictions_per_seq=args.max_predictions_per_seq,
-                    masked_context_token_prob=args.masked_context_prob,
-                    mask_column_token_prob=args.masked_column_prob,
-                    column_delimiter=args.column_delimiter,
-                    tokenizer=tokenizer,
-                    vocab_list=vocab_list
-                )
-                for instance in instances:
-                    instance_sender.send_pyobj(json.dumps(instance))
+        example = table_db[idx]
+        # print('get one example')
+        try:
+            instances = create_training_instances_from_example(
+                example,
+                max_context_length=args.max_context_len,
+                max_sequence_length=args.max_seq_len,
+                max_predictions_per_seq=args.max_predictions_per_seq,
+                masked_context_token_prob=args.masked_context_prob,
+                mask_column_token_prob=args.masked_column_prob,
+                column_delimiter=args.column_delimiter,
+                tokenizer=tokenizer,
+                vocab_list=vocab_list
+            )
+            for instance in instances:
+                instance_sender.send_pyobj(json.dumps(instance))
 
-                num_processed += 1
-                if num_processed == 1000:
-                    status_queue.put(('HEART_BEAT', num_processed))
-                    num_processed = 0
-            except:
-                typ, value, tb = sys.exc_info()
-                print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
-                print(example.serialize(), file=sys.stderr)
-                print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
-                print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+            num_processed += 1
+            if num_processed == 1000:
+                status_queue.put(('HEART_BEAT', num_processed))
+                num_processed = 0
+        except:
+            typ, value, tb = sys.exc_info()
+            print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+            print(example.serialize(), file=sys.stderr)
+            print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
 
-                sys.stderr.flush()
+            sys.stderr.flush()
 
     instance_sender.send_pyobj(None)
     status_queue.put('EXIT')

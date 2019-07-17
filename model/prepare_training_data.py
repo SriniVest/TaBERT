@@ -5,160 +5,23 @@ import time
 import traceback
 from argparse import ArgumentParser, Namespace
 from multiprocessing import connection
-from types import SimpleNamespace
 from typing import List, Dict
 
 import gc
 import zmq
-import redis
-import numpy as np
 
-import shelve
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from tqdm import tqdm, trange
 
 from random import shuffle, choice, sample, random
 
 from pytorch_pretrained_bert import *
 
-from model.dataset import Example
-
+from model.dataset import Example, TableDatabase
 
 TRAIN_INSTANCE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15566'
 EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'
 DATABASE_SERVER_ADDR = 'localhost'
-
-
-class TableDatabase:
-    def __init__(self):
-        self.restore_client()
-        self.client.flushall(asynchronous=False)
-        self._cur_index = multiprocessing.Value('i', 0)
-
-    def restore_client(self):
-        self.client = redis.Redis(host='localhost', port=6379, db=0)
-
-    @staticmethod
-    def __load_process_zmq(file, num_workers):
-        context = zmq.Context()
-        job_sender = context.socket(zmq.PUSH)
-        job_sender.setsockopt(zmq.LINGER, -1)
-        job_sender.bind("tcp://127.0.0.1:5557")
-
-        cnt = 0
-        with file.open() as f:
-            for line in f:
-                job_sender.send_string(line)
-                # if cnt % 10000 == 0:
-                #     print(f'read {cnt} examples')
-                #     sys.stdout.flush()
-
-        while True:
-            job_sender.send_string('')
-            time.sleep(0.1)
-
-    @staticmethod
-    def __example_worker_process_zmq(tokenizer, db):
-        context = zmq.Context()
-        job_receiver = context.socket(zmq.PULL)
-        job_receiver.setsockopt(zmq.LINGER, -1)
-        job_receiver.connect("tcp://127.0.0.1:5557")
-
-        cache_client = redis.Redis(host='localhost', port=6379, db=0)
-        buffer_size = 20000
-
-        def _add_to_cache():
-            if buffer:
-                with db._cur_index.get_lock():
-                    index_end = db._cur_index.value + len(buffer)
-                    db._cur_index.value = index_end
-                index_start = index_end - len(buffer)
-                values = {str(i): val for i, val in zip(range(index_start, index_end), buffer)}
-                cache_client.mset(values)
-                del buffer[:]
-
-        cnt = 0
-        buffer = []
-        while True:
-            job = job_receiver.recv_string()
-            if job:
-                cnt += 1
-                example = Example.from_dict(json.loads(job), tokenizer, suffix=None)
-
-                # TODO: move this to data pre-processing
-                if any(len(col.name.split(' ')) > 10 for col in example.header):
-                    continue
-
-                data = example.serialize()
-                buffer.append(json.dumps(data))
-
-                if len(buffer) >= buffer_size:
-                    _add_to_cache()
-            else:
-                job_receiver.close()
-                _add_to_cache()
-                break
-
-            cnt += 1
-
-    @classmethod
-    def from_jsonl(cls, file_path: Path, tokenizer: BertTokenizer) -> 'TableDatabase':
-        file_path = Path(file_path)
-        db = cls()
-        num_workers = multiprocessing.cpu_count() - 5
-
-        reader = multiprocessing.Process(target=cls.__load_process_zmq, args=(file_path, num_workers),
-                                         daemon=True)
-
-        workers = []
-        for _ in range(num_workers):
-            worker = multiprocessing.Process(target=cls.__example_worker_process_zmq,
-                                             args=(tokenizer, db),
-                                             daemon=True)
-            worker.start()
-            workers.append(worker)
-
-        reader.start()
-
-        stop_count = 0
-        db_size = 0
-        with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
-            while True:
-                cur_db_size = len(db)
-                pbar.update(cur_db_size - db_size)
-                db_size = cur_db_size
-
-                all_worker_finished = all(not w.is_alive() for w in workers)
-                if all_worker_finished:
-                    print(f'all workers stoped!')
-                    break
-
-                time.sleep(5)
-
-        for worker in workers:
-            worker.join()
-        reader.terminate()
-
-        return db
-
-    def __len__(self):
-        return self._cur_index.value
-
-    def __getitem__(self, item):
-        result = self.client.get(str(item))
-        if result is None:
-            raise IndexError(item)
-
-        example = Example.from_serialized(json.loads(result))
-
-        return example
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, traceback):
-        pass
 
 
 def create_training_instances_from_example(example: Example,

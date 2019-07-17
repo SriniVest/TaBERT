@@ -1,13 +1,19 @@
 import json
 import logging
 import math
+import multiprocessing
 import subprocess
 import sys
+import time
 from collections import OrderedDict
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional, Iterator
 
 import numpy as np
+import redis
 import torch
+import zmq
+from pytorch_pretrained_bert import BertTokenizer
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
@@ -207,7 +213,7 @@ class Example(object):
         return Example(**data)
 
     @classmethod
-    def from_dict(cls, entry: Dict, tokenizer, suffix) -> 'Example':
+    def from_dict(cls, entry: Dict, tokenizer: Optional[BertTokenizer], suffix) -> 'Example':
         def _get_data_source():
             return 'common_crawl' if 'context_before' in entry else 'wiki'
 
@@ -218,10 +224,13 @@ class Example(object):
         column_data = []
         for col in header_entry:
             sample_value = col['sample_value']['value']
+            if tokenizer:
+                name_tokens = tokenizer.tokenize(col['name'])
+            else: name_tokens = None
             column = Column(col['name'],
                             col['type'],
                             sample_value,
-                            name_tokens=tokenizer.tokenize(col['name']))
+                            name_tokens=name_tokens)
             header.append(column)
 
         if source == 'wiki':
@@ -245,22 +254,29 @@ class Example(object):
         if source == 'wiki':
             for para in entry['context']:
                 for sent in para:
-                    tokenized_sent = tokenizer.tokenize(sent)
-                    context_before.append(tokenized_sent)
+                    if tokenizer:
+                        sent = tokenizer.tokenize(sent)
 
-            if entry['caption']:
-                caption = tokenizer.tokenize(entry['caption'])
+                    context_before.append(sent)
+
+            caption = entry['caption']
+            if caption:
+                if tokenizer:
+                    caption = tokenizer.tokenize(entry['caption'])
+
                 context_before.append(caption)
 
             uuid = f"{source}_{entry['id']}_{'_'.join(entry['title'])}"
         else:
             for sent in entry['context_before']:
-                tokenized_sent = tokenizer.tokenize(sent)
-                context_before.append(tokenized_sent)
+                if tokenizer:
+                    sent = tokenizer.tokenize(sent)
+                context_before.append(sent)
 
             for sent in entry['context_after']:
-                tokenized_sent = tokenizer.tokenize(sent)
-                context_after.append(tokenized_sent)
+                if tokenizer:
+                    sent = tokenizer.tokenize(sent)
+                context_after.append(sent)
 
             uuid = entry['uuid']
 
@@ -268,3 +284,139 @@ class Example(object):
                    [context_before, context_after],
                    column_data=column_data,
                    source=source)
+
+
+class TableDatabase:
+    def __init__(self):
+        self.restore_client()
+        self.client.flushall(asynchronous=False)
+        self._cur_index = multiprocessing.Value('i', 0)
+
+    def restore_client(self):
+        self.client = redis.Redis(host='localhost', port=6379, db=0)
+
+    @staticmethod
+    def __load_process_zmq(file, num_workers):
+        context = zmq.Context()
+        job_sender = context.socket(zmq.PUSH)
+        job_sender.setsockopt(zmq.LINGER, -1)
+        job_sender.bind("tcp://127.0.0.1:5557")
+
+        cnt = 0
+        with file.open() as f:
+            for line in f:
+                job_sender.send_string(line)
+                # if cnt % 10000 == 0:
+                #     print(f'read {cnt} examples')
+                #     sys.stdout.flush()
+
+        while True:
+            job_sender.send_string('')
+            time.sleep(0.1)
+
+    @staticmethod
+    def __example_worker_process_zmq(tokenizer, db):
+        context = zmq.Context()
+        job_receiver = context.socket(zmq.PULL)
+        job_receiver.setsockopt(zmq.LINGER, -1)
+        job_receiver.connect("tcp://127.0.0.1:5557")
+
+        cache_client = redis.Redis(host='localhost', port=6379, db=0)
+        buffer_size = 20000
+
+        def _add_to_cache():
+            if buffer:
+                with db._cur_index.get_lock():
+                    index_end = db._cur_index.value + len(buffer)
+                    db._cur_index.value = index_end
+                index_start = index_end - len(buffer)
+                values = {str(i): val for i, val in zip(range(index_start, index_end), buffer)}
+                cache_client.mset(values)
+                del buffer[:]
+
+        cnt = 0
+        buffer = []
+        while True:
+            job = job_receiver.recv_string()
+            if job:
+                cnt += 1
+                example = Example.from_dict(json.loads(job), tokenizer, suffix=None)
+
+                # TODO: move this to data pre-processing
+                if any(len(col.name.split(' ')) > 10 for col in example.header):
+                    continue
+
+                data = example.serialize()
+                buffer.append(json.dumps(data))
+
+                if len(buffer) >= buffer_size:
+                    _add_to_cache()
+            else:
+                job_receiver.close()
+                _add_to_cache()
+                break
+
+            cnt += 1
+
+    @classmethod
+    def from_jsonl(cls, file_path: Path, tokenizer: Optional[BertTokenizer] = None) -> 'TableDatabase':
+        file_path = Path(file_path)
+        db = cls()
+        num_workers = multiprocessing.cpu_count() - 5
+
+        reader = multiprocessing.Process(target=cls.__load_process_zmq, args=(file_path, num_workers),
+                                         daemon=True)
+
+        workers = []
+        for _ in range(num_workers):
+            worker = multiprocessing.Process(target=cls.__example_worker_process_zmq,
+                                             args=(tokenizer, db),
+                                             daemon=True)
+            worker.start()
+            workers.append(worker)
+
+        reader.start()
+
+        stop_count = 0
+        db_size = 0
+        with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
+            while True:
+                cur_db_size = len(db)
+                pbar.update(cur_db_size - db_size)
+                db_size = cur_db_size
+
+                all_worker_finished = all(not w.is_alive() for w in workers)
+                if all_worker_finished:
+                    print(f'all workers stoped!')
+                    break
+
+                time.sleep(5)
+
+        for worker in workers:
+            worker.join()
+        reader.terminate()
+
+        return db
+
+    def __len__(self):
+        return self._cur_index.value
+
+    def __getitem__(self, item) -> Example:
+        result = self.client.get(str(item))
+        if result is None:
+            raise IndexError(item)
+
+        example = Example.from_serialized(json.loads(result))
+
+        return example
+
+    def __iter__(self) -> Iterator[Example]:
+        for i in range(len(self)):
+            yield self[i]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, traceback):
+        print('Flushing all entries in cache')
+        self.client.flushall()

@@ -266,7 +266,7 @@ class Example(object):
 
                 context_before.append(caption)
 
-            uuid = f"{source}_{entry['id']}_{'_'.join(entry['title'])}"
+            uuid = f"{source}_{entry['id']}_{entry['title']}"
         else:
             for sent in entry['context_before']:
                 if tokenizer:
@@ -344,6 +344,9 @@ class TableDatabase:
 
                 # TODO: move this to data pre-processing
                 if any(len(col.name.split(' ')) > 10 for col in example.header):
+                    continue
+
+                if any(len(col.name_tokens) == 0 for col in example.header):
                     continue
 
                 data = example.serialize()

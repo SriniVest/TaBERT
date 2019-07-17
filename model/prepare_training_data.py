@@ -24,16 +24,7 @@ EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'
 DATABASE_SERVER_ADDR = 'localhost'
 
 
-def create_training_instances_from_example(example: Example,
-                                           masked_context_token_prob: float, mask_column_token_prob: float,
-                                           max_context_length: int,
-                                           max_sequence_length: int,
-                                           max_predictions_per_seq: int,
-                                           column_delimiter: str,
-                                           tokenizer: BertTokenizer,
-                                           vocab_list: list) -> List[Dict]:
-    # Account for [CLS], [SEP], [SEP]
-
+def sample_context(example: Example, max_context_length: int) -> List[str]:
     context_before, context_after = example.context[0], example.context[1]
     if not context_before:
         context = context_after[::-1]
@@ -52,10 +43,26 @@ def create_training_instances_from_example(example: Example,
         if len(selected_context) > max_context_length:
             selected_context = selected_context[-max_context_length:]  # only keep context close to the table
 
-    assert len(selected_context) > 0
+    return selected_context
 
-    tokens_a = ['[CLS]'] + selected_context + ['[SEP]']
-    # segment_ids = [0] * len(sequence)
+
+def create_training_instances_from_example(
+    example: Example,
+    masked_context_token_prob: float, mask_column_token_prob: float,
+    max_context_length: int,
+    max_sequence_length: int,
+    max_predictions_per_seq: int,
+    tokenizer: BertTokenizer,
+    vocab_list: list,
+    column_delimiter: str = '[SEP]',
+    column_item_delimiter: str = '|',
+) -> List[Dict]:
+
+    context = sample_context(example, max_context_length)
+    assert len(context) > 0
+
+    tokens_a = ['[CLS]'] + context + ['[SEP]']
+    # Account for [CLS], [SEP], [SEP]
     context_cand_indices = list(range(1, len(tokens_a) - 1))
 
     tokens_b = []
@@ -67,8 +74,8 @@ def create_training_instances_from_example(example: Example,
         col_tokens = list(column.name_tokens)
         col_name_indices = list(range(col_start_idx, col_start_idx + len(column.name_tokens)))
 
-        col_tokens += ['('] + [column.type] + [')']
-        col_type_idx = col_start_idx + len(column.name_tokens) + 1
+        col_tokens += [column_item_delimiter] + [column.type]
+        col_type_idx = col_name_indices[-1] + 2  # skip the separator
 
         col_values = example.column_data[col_id]
         # print(col_values)
@@ -77,7 +84,7 @@ def create_training_instances_from_example(example: Example,
         # print('chosen value', sampled_value)
         sampled_value_tokens = tokenizer.tokenize(sampled_value)
 
-        col_tokens += ['('] + sampled_value_tokens[:5] + [')']
+        col_tokens += [column_item_delimiter] + sampled_value_tokens[:5]
         col_tokens += [column_delimiter]
 
         _col_cand_indices = col_name_indices + [col_type_idx]
@@ -93,13 +100,17 @@ def create_training_instances_from_example(example: Example,
 
         col_start_idx += len(col_tokens)
 
-    del tokens_b[-1]  # remove last delimiter
+    if tokens_b[-1] == column_delimiter:
+        del tokens_b[-1]  # remove last delimiter
+
     sequence = tokens_a + tokens_b + ['[SEP]']
     segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b) + [1]
 
-    masked_sequence, masked_lm_positions, masked_lm_labels = create_masked_lm_predictions(sequence, context_cand_indices, column_cand_indices,
-                                                                                          masked_context_token_prob, mask_column_token_prob,
-                                                                                          max_predictions_per_seq, vocab_list)
+    masked_sequence, masked_lm_positions, masked_lm_labels = create_masked_lm_predictions(
+        sequence, context_cand_indices, column_cand_indices,
+        masked_context_token_prob, mask_column_token_prob,
+        max_predictions_per_seq, vocab_list
+    )
 
     instance = {
         "tokens": masked_sequence,
@@ -181,9 +192,10 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
                 max_predictions_per_seq=args.max_predictions_per_seq,
                 masked_context_token_prob=args.masked_context_prob,
                 mask_column_token_prob=args.masked_column_prob,
-                column_delimiter=args.column_delimiter,
                 tokenizer=tokenizer,
-                vocab_list=vocab_list
+                vocab_list=vocab_list,
+                column_delimiter=args.column_delimiter,
+                column_item_delimiter=args.column_item_delimiter
             )
             for instance in instances:
                 instance_sender.send_pyobj(json.dumps(instance))
@@ -198,7 +210,7 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
             print(example.serialize(), file=sys.stderr)
             print('*' * 50 + 'Stack Trace' + '*' * 50, file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-            print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
+            # print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
 
             sys.stderr.flush()
 
@@ -308,6 +320,7 @@ def main():
     parser.add_argument("--max_predictions_per_seq", type=int, default=20,
                         help="Maximum number of tokens to mask in each sequence")
     parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
+    parser.add_argument("--column_item_delimiter", type=str, default='|', help='Column item delimiter')
 
     parser.add_argument('--no_wiki_tables_from_common_crawl', action='store_true', default=False)
 
@@ -326,6 +339,9 @@ def main():
         dev_size = min(int(len(table_db) * 0.1), 500000)
         train_indices = example_indices[:-dev_size]
         dev_indices = example_indices[-dev_size:]
+
+        with (args.output_dir / 'config.json').open('w') as f:
+            json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
 
         (args.output_dir / 'train').mkdir(exist_ok=True)
         (args.output_dir / 'dev').mkdir(exist_ok=True)

@@ -4,8 +4,9 @@ import os, sys
 import time
 import traceback
 from argparse import ArgumentParser, Namespace
+from math import floor, ceil
 from multiprocessing import connection
-from typing import List, Dict
+from typing import List, Dict, Iterator
 
 import gc
 import zmq
@@ -24,106 +25,203 @@ EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'
 DATABASE_SERVER_ADDR = 'localhost'
 
 
-def sample_context(example: Example, max_context_length: int) -> List[str]:
-    context_before, context_after = example.context[0], example.context[1]
-    if not context_before:
-        context = context_after[::-1]
-    elif not context_after:
-        context = context_before
-    elif random() < 0.5:
-        context = context_after[::-1]
-    else:
-        context = context_before
-
+def sample_context(example: Example, max_context_length: int, context_sample_strategy: str = 'nearest') -> Iterator:
     selected_context = []
-    for i in reversed(range(0, len(context))):
-        sent = context[i]
-        selected_context = sent + selected_context
 
-        if len(selected_context) > max_context_length:
-            selected_context = selected_context[-max_context_length:]  # only keep context close to the table
+    if context_sample_strategy == 'nearest':
+        context_before, context_after = example.context[0], example.context[1]
+        context_src = 'before'
+        if not context_before:
+            context = context_after
+            context_src = 'after'
+        elif not context_after:
+            context = context_before
+        elif random() < 0.5:
+            context = context_after
+            context_src = 'after'
+        else:
+            context = context_before
 
-    return selected_context
+        if context_src == 'before':
+            for i in reversed(range(0, len(context))):
+                sent = context[i]
+                selected_context = sent + selected_context
+
+                if len(selected_context) > max_context_length:
+                    selected_context = selected_context[-max_context_length:]  # only keep context close to the table
+                    break
+        elif context_src == 'after':
+            for i in range(0, len(context)):
+                sent = context[i]
+                selected_context = selected_context + sent
+
+                if len(selected_context) > max_context_length:
+                    selected_context = selected_context[:max_context_length]  # only keep context close to the table
+                    break
+
+        if selected_context:
+            yield selected_context
+    elif context_sample_strategy == 'concate_and_enumerate':
+        # concatenate the context before and after, select a random chunk of text
+        all_context = example.context[0] + example.context[1]
+        selected_context = []
+        for i in range(len(all_context)):
+            sent = all_context[i]
+            selected_context.extend(sent)
+            if len(selected_context) > max_context_length:
+                selected_context = selected_context[:max_context_length]
+
+                if selected_context:
+                    yield selected_context
+                selected_context = []
+
+        if selected_context:
+            yield selected_context
+    else:
+        raise RuntimeError('Unknown context sample strategy')
 
 
 def create_training_instances_from_example(
     example: Example,
-    masked_context_token_prob: float, mask_column_token_prob: float,
-    max_context_length: int,
-    max_sequence_length: int,
-    max_predictions_per_seq: int,
+    args: Namespace,
     tokenizer: BertTokenizer,
     vocab_list: list,
-    column_delimiter: str = '[SEP]',
-    column_item_delimiter: str = '|',
 ) -> List[Dict]:
+    instances = []
+    context_iter = sample_context(example, args.max_context_len, context_sample_strategy=args.context_sample_strategy)
+    for context in context_iter:
+        tokens_a = ['[CLS]'] + context + ['[SEP]']
+        # Account for [CLS], [SEP], [SEP]
+        context_cand_indices = list(range(1, len(tokens_a) - 1))
 
-    context = sample_context(example, max_context_length)
-    assert len(context) > 0
+        tokens_b = []
+        column_cand_indices: List[List] = []
 
-    tokens_a = ['[CLS]'] + context + ['[SEP]']
-    # Account for [CLS], [SEP], [SEP]
-    context_cand_indices = list(range(1, len(tokens_a) - 1))
+        max_table_token_length = args.max_seq_len - len(tokens_a) - 1  # account for ending [SEP]
+        col_start_idx = len(tokens_a)
+        for col_id, column in enumerate(example.header):
+            col_tokens = list(column.name_tokens)
+            col_name_indices = list(range(col_start_idx, col_start_idx + len(column.name_tokens)))
 
-    tokens_b = []
-    column_cand_indices = []
+            col_tokens += [args.column_item_delimiter] + [column.type]
+            col_type_idx = col_name_indices[-1] + 2  # skip the separator
 
-    max_table_token_length = max_sequence_length - len(tokens_a) - 1  # account for ending [SEP]
-    col_start_idx = len(tokens_a)
-    for col_id, column in enumerate(example.header):
-        col_tokens = list(column.name_tokens)
-        col_name_indices = list(range(col_start_idx, col_start_idx + len(column.name_tokens)))
+            col_values = example.column_data[col_id]
+            # print(col_values)
+            col_values = [val for val in col_values if val is not None and len(val) > 0]
+            sampled_value = choice(col_values)
+            # print('chosen value', sampled_value)
+            sampled_value_tokens = tokenizer.tokenize(sampled_value)
 
-        col_tokens += [column_item_delimiter] + [column.type]
-        col_type_idx = col_name_indices[-1] + 2  # skip the separator
+            col_tokens += [args.column_item_delimiter] + sampled_value_tokens[:5]
+            col_tokens += [args.column_delimiter]
 
-        col_values = example.column_data[col_id]
-        # print(col_values)
-        col_values = [val for val in col_values if val is not None and len(val) > 0]
-        sampled_value = choice(col_values)
-        # print('chosen value', sampled_value)
-        sampled_value_tokens = tokenizer.tokenize(sampled_value)
+            _col_cand_indices = col_name_indices + [col_type_idx]
 
-        col_tokens += [column_item_delimiter] + sampled_value_tokens[:5]
-        col_tokens += [column_delimiter]
+            tokens_b += col_tokens
+            column_cand_indices.append(_col_cand_indices)
 
-        _col_cand_indices = col_name_indices + [col_type_idx]
+            if len(tokens_b) >= max_table_token_length:
+                tokens_b = tokens_b[:max_table_token_length]
+                column_cand_indices = [idx for idx in column_cand_indices if idx < args.max_seq_len - 1]
 
-        tokens_b += col_tokens
-        column_cand_indices.extend(_col_cand_indices)
+                break
 
-        if len(tokens_b) >= max_table_token_length:
-            tokens_b = tokens_b[:max_table_token_length]
-            column_cand_indices = [idx for idx in column_cand_indices if idx < max_sequence_length - 1]
+            col_start_idx += len(col_tokens)
 
-            break
+        if tokens_b[-1] == args.column_delimiter:
+            del tokens_b[-1]  # remove last delimiter
 
-        col_start_idx += len(col_tokens)
+        sequence = tokens_a + tokens_b + ['[SEP]']
+        segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b) + [1]
 
-    if tokens_b[-1] == column_delimiter:
-        del tokens_b[-1]  # remove last delimiter
+        masked_sequence, masked_lm_positions, masked_lm_labels, info = create_masked_lm_predictions(
+            sequence, context_cand_indices, column_cand_indices,
+            vocab_list, args
+        )
 
-    sequence = tokens_a + tokens_b + ['[SEP]']
-    segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b) + [1]
+        info['num_columns'] = len(example.header)
 
-    masked_sequence, masked_lm_positions, masked_lm_labels = create_masked_lm_predictions(
-        sequence, context_cand_indices, column_cand_indices,
-        masked_context_token_prob, mask_column_token_prob,
-        max_predictions_per_seq, vocab_list
-    )
+        instance = {
+            "tokens": masked_sequence,
+            "segment_ids": segment_ids,
+            "masked_lm_positions": masked_lm_positions,
+            "masked_lm_labels": masked_lm_labels,
+            "source": example.source,
+            "info": info
+        }
 
-    instance = {
-        "tokens": masked_sequence,
-        "segment_ids": segment_ids,
-        "masked_lm_positions": masked_lm_positions,
-        "masked_lm_labels": masked_lm_labels,
-        "source": example.source
-    }
+        instances.append(instance)
 
-    return [instance]
+    return instances
 
 
-def create_masked_lm_predictions(tokens, context_indices, column_indices,
+def create_masked_lm_predictions(
+    tokens, context_indices, column_indices,
+    vocab_list,
+    args: Namespace
+):
+    table_mask_strategy = args.table_mask_strategy
+    info = dict()
+    if table_mask_strategy == 'column_token':
+        column_indices = [i for l in column_indices for i in l]
+        num_column_tokens_to_mask = min(args.max_predictions_per_seq,
+                                        max(2, int(len(column_indices) * args.masked_column_prob)))
+        shuffle(column_indices)
+        masked_column_token_indices = sorted(sample(column_indices, num_column_tokens_to_mask))
+    elif table_mask_strategy == 'column':
+        num_maskable_columns = len(column_indices)
+        num_column_to_mask = max(1, ceil(num_maskable_columns * args.masked_column_prob))
+        columns_to_mask = sorted(sample(list(range(num_maskable_columns)), num_column_to_mask))
+        shuffle(columns_to_mask)
+        num_column_tokens_to_mask = sum(len(column_indices[i]) for i in columns_to_mask)
+        masked_column_token_indices = [idx for col in columns_to_mask for idx in column_indices[col]]
+        info['num_masked_columns'] = num_column_to_mask
+    else:
+        raise RuntimeError('unknown mode!')
+
+    max_context_token_to_mask = args.max_predictions_per_seq - num_column_tokens_to_mask
+    num_context_tokens_to_mask = min(max_context_token_to_mask,
+                                     max(1, int(len(context_indices) * args.masked_context_prob)))
+
+    if num_context_tokens_to_mask > 0:
+        # if num_context_tokens_to_mask < 0 or num_context_tokens_to_mask > len(context_indices):
+        #     for col_id in columns_to_mask:
+        #         print([tokens[i] for i in column_indices[col_id]])
+        #     print(num_context_tokens_to_mask, num_column_tokens_to_mask)
+        shuffle(context_indices)
+        masked_context_token_indices = sorted(sample(context_indices, num_context_tokens_to_mask))
+        masked_indices = sorted(masked_context_token_indices + masked_column_token_indices)
+    else:
+        masked_indices = masked_column_token_indices
+
+    masked_token_labels = []
+
+    for index in masked_indices:
+        # 80% of the time, replace with [MASK]
+        if random() < 0.8:
+            masked_token = "[MASK]"
+        else:
+            # 10% of the time, keep original
+            if random() < 0.5:
+                masked_token = tokens[index]
+            # 10% of the time, replace with random word
+            else:
+                masked_token = choice(vocab_list)
+        masked_token_labels.append(tokens[index])
+        # Once we've saved the true label for that token, we can overwrite it with the masked version
+        tokens[index] = masked_token
+
+    info.update({
+        'num_column_tokens_to_mask': num_column_tokens_to_mask,
+        'num_maskable_column_tokens': sum(len(token_ids) for token_ids in column_indices),
+        'num_context_tokens_to_mask': num_context_tokens_to_mask,
+    })
+
+    return tokens, masked_indices, masked_token_labels, info
+
+
+def __create_masked_lm_predictions_deprecated(tokens, context_indices, column_indices,
                                  masked_context_token_prob, mask_column_token_prob,
                                  max_predictions_per_seq, vocab_list):
     """Creates the predictions for the masked LM objective. This is mostly copied from the Google BERT repo, but
@@ -187,15 +285,9 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
         try:
             instances = create_training_instances_from_example(
                 example,
-                max_context_length=args.max_context_len,
-                max_sequence_length=args.max_seq_len,
-                max_predictions_per_seq=args.max_predictions_per_seq,
-                masked_context_token_prob=args.masked_context_prob,
-                mask_column_token_prob=args.masked_column_prob,
                 tokenizer=tokenizer,
                 vocab_list=vocab_list,
-                column_delimiter=args.column_delimiter,
-                column_item_delimiter=args.column_item_delimiter
+                args=args
             )
             for instance in instances:
                 instance_sender.send_pyobj(json.dumps(instance))
@@ -319,6 +411,8 @@ def main():
                         help="Probability of masking each token for the LM task")
     parser.add_argument("--max_predictions_per_seq", type=int, default=20,
                         help="Maximum number of tokens to mask in each sequence")
+    parser.add_argument('--context_sample_strategy', type=str, default='nearest')
+    parser.add_argument('--table_mask_strategy', type=str, default='column_token')
     parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
     parser.add_argument("--column_item_delimiter", type=str, default='|', help='Column item delimiter')
 

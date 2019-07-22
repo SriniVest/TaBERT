@@ -7,7 +7,7 @@ import sys
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Optional, Iterator
+from typing import Dict, Optional, Iterator, Set
 
 import numpy as np
 import redis
@@ -83,15 +83,13 @@ class TableDataset(Dataset):
         self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
         # self.data_epoch = epoch % num_data_epochs
-        data_file = training_path / f"epoch_{self.data_epoch}.json"
-        metrics_file = training_path / f"epoch_{self.data_epoch}_metrics.json"
-        assert data_file.is_file() and metrics_file.is_file()
+        data_file_prefix = training_path / f"epoch_{self.data_epoch}"
+        metrics_file = training_path / f"epoch_{self.data_epoch}.metrics.json"
+        assert metrics_file.is_file()
         metrics = json.loads(metrics_file.read_text())
-        num_samples = metrics['num_training_examples']
-        seq_len = metrics['max_seq_len']
-        self.temp_dir = None
-        self.working_dir = None
-        examples = []
+        dataset_size = metrics['num_training_examples']
+
+        assert reduce_memory is False, 'reduce_memory is not implemented'
 
         indices = []
         if multi_gpu:
@@ -99,7 +97,6 @@ class TableDataset(Dataset):
             num_shards = torch.distributed.get_world_size()
             local_shard_id = torch.distributed.get_rank()
 
-            dataset_size = int(subprocess.check_output(f"/usr/bin/wc -l {data_file}", shell=True).split()[0])
             shard_size = dataset_size // num_shards
 
             logging.info(f'dataset_size={dataset_size}, shard_size={shard_size}')
@@ -119,14 +116,47 @@ class TableDataset(Dataset):
             indices = set(indices)
 
         logging.info(f"Loading examples from {training_path} for epoch {epoch}")
-        with data_file.open() as f:
-            for i, line in enumerate(tqdm(f, total=num_samples, desc="Training examples", file=sys.stdout)):
-                if (not multi_gpu) or (multi_gpu and i in indices):
-                    line = line.strip()
-                    example = json.loads(line)
-                    examples.append(example)
 
-        self.examples = examples
+        self.examples = self.load_epoch(data_file_prefix, metrics['shard_num'], indices)
+
+    @staticmethod
+    def load_epoch(file_prefix: Path, shard_num: int, valid_indices: Set = None):
+        examples = []
+        idx = -1
+        for shard_id in range(shard_num):
+            file_name = file_prefix.with_suffix(f'.shard{shard_id}.bin')
+            data = torch.load(str(file_name))
+
+            sequences = data['sequences']
+            segment_a_lengths = data['segment_a_lengths']
+            sequence_offsets = data['sequence_offsets']
+            masked_lm_positions = data['masked_lm_positions']
+            masked_lm_label_ids = data['masked_lm_label_ids']
+            masked_lm_offsets = data['masked_lm_offsets']
+
+            shard_size = len(segment_a_lengths)
+
+            for i in range(shard_size):
+                idx += 1
+
+                if valid_indices and idx not in valid_indices:
+                    continue
+
+                example = {}
+
+                seq_begin, seq_end = sequence_offsets[i]
+                example['token_ids'] = sequences[seq_begin: seq_end]
+
+                seq_a_length = segment_a_lengths[i]
+                example['sequence_a_length'] = seq_a_length
+
+                tgt_begin, tgt_end = masked_lm_offsets[i]
+                example['masked_lm_positions'] = masked_lm_positions[tgt_begin: tgt_end]
+                example['masked_lm_label_ids'] = masked_lm_label_ids[tgt_begin: tgt_end]
+
+                examples.append(example)
+
+        return examples
 
     def __len__(self):
         return len(self.examples)
@@ -137,7 +167,7 @@ class TableDataset(Dataset):
     @staticmethod
     def collate(examples, tokenizer):
         batch_size = len(examples)
-        max_len = max(len(e['tokens']) for e in examples)
+        max_len = max(len(e['token_ids']) for e in examples)
 
         input_array = np.zeros((batch_size, max_len), dtype=np.int)
         mask_array = np.zeros((batch_size, max_len), dtype=np.bool)
@@ -145,14 +175,17 @@ class TableDataset(Dataset):
         lm_label_array = np.full((batch_size, max_len), dtype=np.int, fill_value=-1)
 
         for e_id, example in enumerate(examples):
-            token_ids = tokenizer.convert_tokens_to_ids(example['tokens'])
-            masked_label_ids = tokenizer.convert_tokens_to_ids(example['masked_lm_labels'])
-            segment_ids = example['segment_ids']
+            token_ids = example['token_ids']
+            # print(tokenizer.convert_ids_to_tokens(token_ids))
+            # assert tokenizer.convert_ids_to_tokens([token_ids[0]]) == ['[CLS]'] and \
+            #        tokenizer.convert_ids_to_tokens([token_ids[-1]]) == ['[SEP]']
+
+            masked_label_ids = example['masked_lm_label_ids']
             masked_lm_positions = example['masked_lm_positions']
 
             input_array[e_id, :len(token_ids)] = token_ids
             mask_array[e_id, :len(token_ids)] = 1
-            segment_array[e_id, :len(segment_ids)] = segment_ids
+            segment_array[e_id, example['sequence_a_length']:] = 1
             lm_label_array[e_id, masked_lm_positions] = masked_label_ids
 
         return (torch.tensor(input_array.astype(np.int64)),

@@ -42,9 +42,8 @@ def main():
 
     samples_per_epoch = []
     for i in range(args.epochs):
-        epoch_file = args.train_data / f"epoch_{i}.json"
-        metrics_file = args.train_data / f"epoch_{i}_metrics.json"
-        if epoch_file.is_file() and metrics_file.is_file():
+        metrics_file = args.train_data / f"epoch_{i}.metrics.json"
+        if metrics_file.is_file():
             metrics = json.loads(metrics_file.read_text())
             samples_per_epoch.append(metrics['num_training_examples'])
         else:

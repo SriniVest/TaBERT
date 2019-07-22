@@ -7,8 +7,10 @@ from argparse import ArgumentParser, Namespace
 from math import floor, ceil
 from multiprocessing import connection
 from typing import List, Dict, Iterator
+import numpy as np
 
 import gc
+import torch
 import zmq
 
 from pathlib import Path
@@ -142,13 +144,15 @@ def create_training_instances_from_example(
 
         if args.context_first:
             sequence = ['[CLS]'] + context_tokens + ['[SEP]'] + table_tokens + ['[SEP]']
-            segment_ids = [0] * (len(context_tokens) + 2) + [1] * (len(table_tokens) + 1)
+            # segment_ids = [0] * (len(context_tokens) + 2) + [1] * (len(table_tokens) + 1)
+            segment_a_length = len(context_tokens) + 2
 
             # Account for [CLS], [SEP]
             context_candidate_indices = list(range(1, 1 + len(context_tokens)))
         else:
             sequence = ['[CLS]'] + table_tokens + ['[SEP]'] + context_tokens + ['[SEP]']
-            segment_ids = [0] * (len(table_tokens) + 2) + [1] * (len(context_tokens) + 1)
+            # segment_ids = [0] * (len(table_tokens) + 2) + [1] * (len(context_tokens) + 1)
+            segment_a_length = len(table_tokens) + 2
             context_candidate_indices = list(range(len(table_tokens) + 2, len(sequence) - 1))
 
         masked_sequence, masked_lm_positions, masked_lm_labels, info = create_masked_lm_predictions(
@@ -160,9 +164,11 @@ def create_training_instances_from_example(
 
         instance = {
             "tokens": masked_sequence,
-            "segment_ids": segment_ids,
+            "token_ids": tokenizer.convert_tokens_to_ids(masked_sequence),
+            "segment_a_length": segment_a_length,
             "masked_lm_positions": masked_lm_positions,
             "masked_lm_labels": masked_lm_labels,
+            "masked_lm_label_ids": tokenizer.convert_tokens_to_ids(masked_lm_labels),
             "source": example.source,
             "info": info
         }
@@ -306,7 +312,7 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
                 args=args
             )
             for instance in instances:
-                instance_sender.send_pyobj(json.dumps(instance))
+                instance_sender.send_pyobj(instance)
 
             num_processed += 1
             if num_processed == 1000:
@@ -329,7 +335,7 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
         time.sleep(10)
 
 
-def write_instance_to_file(output_file: Path, num_workers: int, stat_send: connection.Connection):
+def write_instance_to_file(output_file: Path, num_workers: int, stat_send: connection.Connection, shard_size: int = 2000000):
     context = zmq.Context()
     instance_receiver = context.socket(zmq.PULL)
     # instance_receiver.setsockopt(zmq.LINGER, -1)
@@ -337,20 +343,66 @@ def write_instance_to_file(output_file: Path, num_workers: int, stat_send: conne
 
     finished_worker_num = 0
     num_instances = 0
-    with output_file.open('w') as f:
-        while True:
-            data = instance_receiver.recv_pyobj()
-            if data is not None:
-                f.write(data + os.linesep)
-                num_instances += 1
-                # print('write one example')
-            else:
-                # print('one worker finished')
-                finished_worker_num += 1
-                if finished_worker_num == num_workers:
-                    break
+    shard_id = 0
 
-    stat_send.send(num_instances)
+    sequences = []
+    segment_a_lengths = []
+    sequence_offsets = []
+    masked_lm_positions = []
+    masked_lm_label_ids = []
+    masked_lm_offsets = []
+
+    def _save_shard():
+        nonlocal shard_id
+
+        data = {
+            'sequences': np.uint16(sequences),
+            'segment_a_lengths': np.uint16(segment_a_lengths),
+            'sequence_offsets': np.int64(sequence_offsets),
+            'masked_lm_positions': np.uint16(masked_lm_positions),
+            'masked_lm_label_ids': np.uint16(masked_lm_label_ids),
+            'masked_lm_offsets': np.int64(masked_lm_offsets)
+        }
+
+        tgt_file = output_file.with_name(output_file.name + f'.shard{shard_id}.bin')
+        torch.save(data, str(tgt_file), pickle_protocol=4)
+
+        shard_id += 1
+        del sequences[:]
+        del segment_a_lengths[:]
+        del sequence_offsets[:]
+        del masked_lm_positions[:]
+        del masked_lm_label_ids[:]
+        del masked_lm_offsets[:]
+
+    while True:
+        data = instance_receiver.recv_pyobj()
+        if data is not None:
+            cur_pos = len(sequences)
+            sequence_len = len(data['token_ids'])
+            sequences.extend(data['token_ids'])
+            segment_a_lengths.append(data['segment_a_length'])
+            sequence_offsets.append([cur_pos, cur_pos + sequence_len])
+
+            cur_pos = len(masked_lm_positions)
+            lm_mask_len = len(data['masked_lm_positions'])
+            masked_lm_positions.extend(data['masked_lm_positions'])
+            masked_lm_label_ids.extend(data['masked_lm_label_ids'])
+            masked_lm_offsets.append([cur_pos, cur_pos + lm_mask_len])
+
+            num_instances += 1
+
+            if len(sequences) == shard_size:
+                _save_shard()
+        else:
+            finished_worker_num += 1
+            if finished_worker_num == num_workers:
+                break
+
+    if len(sequences) > 0:
+        _save_shard()
+
+    stat_send.send((num_instances, shard_id))
     instance_receiver.close()
 
 
@@ -390,8 +442,8 @@ def generate_for_epoch(table_db: TableDatabase,
                 num_processed = status[1]
                 pbar.update(num_processed)
 
-    num_instances = stat_recv.recv()
-    print('num instanances:', num_instances)
+    num_instances, shard_num = stat_recv.recv()
+    print('num instances:', num_instances)
     instance_writer_process.join()
 
     for worker in workers:
@@ -400,7 +452,8 @@ def generate_for_epoch(table_db: TableDatabase,
     with metrics_file.open('w') as f:
         metrics = {
             "num_training_examples": num_instances,
-            "max_seq_len": args.max_seq_len
+            "max_seq_len": args.max_seq_len,
+            "shard_num": shard_num
         }
         f.write(json.dumps(metrics))
 
@@ -463,14 +516,14 @@ def main():
         (args.output_dir / 'dev').mkdir(exist_ok=True)
 
         # generate dev data first
-        dev_file = args.output_dir / 'dev' / 'epoch_0.json'
-        dev_metrics_file = args.output_dir / 'dev' / "epoch_0_metrics.json"
+        dev_file = args.output_dir / 'dev' / 'epoch_0'
+        dev_metrics_file = args.output_dir / 'dev' / "epoch_0.metrics.json"
         generate_for_epoch(table_db, dev_indices, dev_file, dev_metrics_file, args)
 
         for epoch in trange(args.epochs_to_generate, desc='Epoch'):
             gc.collect()
-            epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}.json"
-            metrics_file = args.output_dir / 'train' / f"epoch_{epoch}_metrics.json"
+            epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}"
+            metrics_file = args.output_dir / 'train' / f"epoch_{epoch}.metrics.json"
             generate_for_epoch(table_db, train_indices, epoch_filename, metrics_file, args)
 
 

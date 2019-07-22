@@ -26,9 +26,9 @@ DATABASE_SERVER_ADDR = 'localhost'
 
 
 def sample_context(example: Example, max_context_length: int, context_sample_strategy: str = 'nearest') -> Iterator:
-    selected_context = []
-
     if context_sample_strategy == 'nearest':
+        selected_context = []
+
         context_before, context_after = example.context[0], example.context[1]
         context_src = 'before'
         if not context_before:
@@ -90,21 +90,29 @@ def create_training_instances_from_example(
     instances = []
     context_iter = sample_context(example, args.max_context_len, context_sample_strategy=args.context_sample_strategy)
     for context in context_iter:
-        tokens_a = ['[CLS]'] + context + ['[SEP]']
-        # Account for [CLS], [SEP], [SEP]
-        context_cand_indices = list(range(1, len(tokens_a) - 1))
+        context_tokens = context
 
-        tokens_b = []
-        column_cand_indices: List[List] = []
+        if args.context_first:
+            table_tokens_start_idx = len(context_tokens) + 2  # account for [CLS] and [SEP]
+            max_table_token_length = args.max_seq_len - len(context_tokens) - 2 - 1  # account for [CLS] and [SEP], and the ending [SEP]
+        else:
+            table_tokens_start_idx = 1  # account for starting [CLS]
+            max_table_token_length = args.max_seq_len - len(context_tokens) - 2 - 1  # account for [CLS] and [SEP], and the ending [SEP]
 
-        max_table_token_length = args.max_seq_len - len(tokens_a) - 1  # account for ending [SEP]
-        col_start_idx = len(tokens_a)
+        # generate table tokens
+        table_tokens = []
+        column_candidate_indices: List[List] = []
+
         for col_id, column in enumerate(example.header):
             col_tokens = list(column.name_tokens)
-            col_name_indices = list(range(col_start_idx, col_start_idx + len(column.name_tokens)))
+            col_name_indices = list(range(table_tokens_start_idx, table_tokens_start_idx + len(column.name_tokens)))
 
             col_tokens += [args.column_item_delimiter] + [column.type]
-            col_type_idx = col_name_indices[-1] + 2  # skip the separator
+
+            if random() < 0.01:
+                col_type_indices = [col_name_indices[-1] + 1, col_name_indices[-1] + 2, col_name_indices[-1] + 3]
+            else:
+                col_type_indices = [col_name_indices[-1] + 2]  # skip the separator
 
             col_values = example.column_data[col_id]
             # print(col_values)
@@ -116,27 +124,35 @@ def create_training_instances_from_example(
             col_tokens += [args.column_item_delimiter] + sampled_value_tokens[:5]
             col_tokens += [args.column_delimiter]
 
-            _col_cand_indices = col_name_indices + [col_type_idx]
+            _col_cand_indices = col_name_indices + col_type_indices
 
-            tokens_b += col_tokens
-            column_cand_indices.append(_col_cand_indices)
+            table_tokens += col_tokens
+            column_candidate_indices.append(_col_cand_indices)
 
-            if len(tokens_b) >= max_table_token_length:
-                tokens_b = tokens_b[:max_table_token_length]
-                column_cand_indices = [idx for idx in column_cand_indices if idx < args.max_seq_len - 1]
+            if len(table_tokens) >= max_table_token_length:
+                table_tokens = table_tokens[:max_table_token_length]
+                column_candidate_indices[-1] = [idx for idx in column_candidate_indices[-1] if idx < args.max_seq_len - 1]
 
                 break
 
-            col_start_idx += len(col_tokens)
+            table_tokens_start_idx += len(col_tokens)
 
-        if tokens_b[-1] == args.column_delimiter:
-            del tokens_b[-1]  # remove last delimiter
+        if table_tokens[-1] == args.column_delimiter:
+            del table_tokens[-1]  # remove last delimiter
 
-        sequence = tokens_a + tokens_b + ['[SEP]']
-        segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b) + [1]
+        if args.context_first:
+            sequence = ['[CLS]'] + context_tokens + ['[SEP]'] + table_tokens + ['[SEP]']
+            segment_ids = [0] * (len(context_tokens) + 2) + [1] * (len(table_tokens) + 1)
+
+            # Account for [CLS], [SEP]
+            context_candidate_indices = list(range(1, 1 + len(context_tokens)))
+        else:
+            sequence = ['[CLS]'] + table_tokens + ['[SEP]'] + context_tokens + ['[SEP]']
+            segment_ids = [0] * (len(table_tokens) + 2) + [1] * (len(context_tokens) + 1)
+            context_candidate_indices = list(range(len(table_tokens) + 2, len(sequence) - 1))
 
         masked_sequence, masked_lm_positions, masked_lm_labels, info = create_masked_lm_predictions(
-            sequence, context_cand_indices, column_cand_indices,
+            sequence, context_candidate_indices, column_candidate_indices,
             vocab_list, args
         )
 
@@ -163,6 +179,7 @@ def create_masked_lm_predictions(
 ):
     table_mask_strategy = args.table_mask_strategy
     info = dict()
+    info['num_maskable_column_tokens'] = sum(len(token_ids) for token_ids in column_indices)
     if table_mask_strategy == 'column_token':
         column_indices = [i for l in column_indices for i in l]
         num_column_tokens_to_mask = min(args.max_predictions_per_seq,
@@ -214,7 +231,6 @@ def create_masked_lm_predictions(
 
     info.update({
         'num_column_tokens_to_mask': num_column_tokens_to_mask,
-        'num_maskable_column_tokens': sum(len(token_ids) for token_ids in column_indices),
         'num_context_tokens_to_mask': num_context_tokens_to_mask,
     })
 
@@ -409,12 +425,18 @@ def main():
                         help="Probability of masking each token for the LM task")
     parser.add_argument("--masked_column_prob", type=float, default=0.20,
                         help="Probability of masking each token for the LM task")
-    parser.add_argument("--max_predictions_per_seq", type=int, default=20,
+    parser.add_argument("--max_predictions_per_seq", type=int, default=100,
                         help="Maximum number of tokens to mask in each sequence")
-    parser.add_argument('--context_sample_strategy', type=str, default='nearest')
-    parser.add_argument('--table_mask_strategy', type=str, default='column_token')
+    parser.add_argument('--context_sample_strategy', type=str, default='nearest',
+                        choices=['nearest', 'concate_and_enumerate'])
+    parser.add_argument('--table_mask_strategy', type=str, default='column_token',
+                        choices=['column', 'column_token'])
     parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
     parser.add_argument("--column_item_delimiter", type=str, default='|', help='Column item delimiter')
+
+    parser.add_argument('--context_first', dest='context_first', action='store_true')
+    parser.add_argument('--table_first', dest='context_first', action='store_false')
+    parser.set_defaults(context_first=True)
 
     parser.add_argument('--no_wiki_tables_from_common_crawl', action='store_true', default=False)
 

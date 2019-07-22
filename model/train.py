@@ -1,3 +1,4 @@
+import shutil
 import sys
 
 import torch
@@ -26,11 +27,15 @@ from model.util import parse_arg, init_logger
 def main():
     args = parse_arg()
 
-    with (args.output_dir / 'config.json').open('w') as f:
-        json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
-
     init_distributed_mode(args)
     logger = init_logger(args)
+
+    if args.is_master:
+        with (args.output_dir / 'config.json').open('w') as f:
+            json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
+
+        # copy the table bert config file to the working directory
+        shutil.copy(args.train_data.parent / 'config.json', args.output_dir / 'tb_config.json')
 
     assert args.train_data.is_dir(), \
         "--train_data should point to the folder of files made by pregenerate_training_data.py!"
@@ -171,7 +176,7 @@ def main():
                                       collate_fn=partial(epoch_dataset.collate, tokenizer=tokenizer))
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
-        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}", file=sys.stdout) as pbar:
+        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}", file=sys.stdout, mininterval=120) as pbar:
             for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids = batch

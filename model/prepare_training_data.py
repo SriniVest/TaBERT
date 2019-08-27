@@ -1,4 +1,3 @@
-import json
 import multiprocessing
 import os, sys
 import time
@@ -8,6 +7,8 @@ from math import floor, ceil
 from multiprocessing import connection
 from typing import List, Dict, Iterator
 import numpy as np
+import json
+import ujson
 
 import gc
 import torch
@@ -288,7 +289,7 @@ def __create_masked_lm_predictions_deprecated(tokens, context_indices, column_in
     return tokens, masked_indices, masked_token_labels
 
 
-def generate_train_instance_from_example(table_db: TableDatabase, indices: List[int], status_queue: multiprocessing.Queue, args: Namespace):
+def generate_train_instance_from_example(table_db: TableDatabase, indices: List[int], status_queue: multiprocessing.Queue, args: Namespace, debug_file: Path = None):
     context = zmq.Context()
     instance_sender = context.socket(zmq.PUSH)
     # instance_sender.setsockopt(zmq.LINGER, -1)
@@ -298,6 +299,9 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     vocab_list = list(tokenizer.vocab.keys())
+
+    if debug_file:
+        f_dbg = open(debug_file, 'w')
 
     # print('started queues')
     num_processed = 0
@@ -312,10 +316,17 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
                 args=args
             )
             for instance in instances:
-                instance_sender.send_pyobj(instance)
+                if debug_file:
+                    f_dbg.write(json.dumps(instance) + os.linesep)
+
+                del instance['tokens']
+                del instance['masked_lm_labels']
+                del instance['info']
+
+                instance_sender.send_pyobj(ujson.dumps(instance, ensure_ascii=False))
 
             num_processed += 1
-            if num_processed == 1000:
+            if num_processed == 5000:
                 status_queue.put(('HEART_BEAT', num_processed))
                 num_processed = 0
         except:
@@ -331,11 +342,19 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
     instance_sender.send_pyobj(None)
     status_queue.put('EXIT')
 
+    if debug_file:
+        f_dbg.close()
+
     while True:
         time.sleep(10)
 
 
-def write_instance_to_file(output_file: Path, num_workers: int, stat_send: connection.Connection, shard_size: int = 2000000):
+def write_instance_to_file(
+        output_file: Path,
+        num_workers: int,
+        stat_send: connection.Connection,
+        shard_size: int = 3000000
+):
     context = zmq.Context()
     instance_receiver = context.socket(zmq.PULL)
     # instance_receiver.setsockopt(zmq.LINGER, -1)
@@ -378,6 +397,8 @@ def write_instance_to_file(output_file: Path, num_workers: int, stat_send: conne
     while True:
         data = instance_receiver.recv_pyobj()
         if data is not None:
+            data = ujson.loads(data)
+
             cur_pos = len(sequences)
             sequence_len = len(data['token_ids'])
             sequences.extend(data['token_ids'])
@@ -392,7 +413,7 @@ def write_instance_to_file(output_file: Path, num_workers: int, stat_send: conne
 
             num_instances += 1
 
-            if len(sequences) == shard_size:
+            if num_instances > 0 and num_instances % shard_size == 0:
                 _save_shard()
         else:
             finished_worker_num += 1
@@ -417,16 +438,22 @@ def generate_for_epoch(table_db: TableDatabase,
     num_workers = multiprocessing.cpu_count() - 2
 
     instance_writer_process = multiprocessing.Process(target=write_instance_to_file,
-                                                      args=(epoch_file, num_workers, stat_send))
+                                                      args=(epoch_file, num_workers, stat_send),
+                                                      daemon=True)
     instance_writer_process.start()
+
+    debug = False
 
     workers = []
     worker_status_queue = multiprocessing.Queue()
     for i in range(num_workers):
         indices_chunk = indices[i: len(indices): num_workers]
-        worker_process = multiprocessing.Process(target=generate_train_instance_from_example,
-                                                 args=(table_db, indices_chunk, worker_status_queue, args),
-                                                 daemon=True)
+        worker_process = multiprocessing.Process(
+            target=generate_train_instance_from_example,
+            args=(table_db, indices_chunk, worker_status_queue, args,
+                  epoch_file.with_suffix('.sample.json') if debug and i == 0 else None),
+            daemon=True
+        )
         worker_process.start()
         workers.append(worker_process)
 

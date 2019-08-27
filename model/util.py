@@ -14,8 +14,7 @@ def parse_arg():
                         action='store_true',
                         help="Whether not to use CUDA when available")
 
-    parser.add_argument('--train_data', type=Path, required=True)
-    parser.add_argument('--dev_data', type=Path, required=True)
+    parser.add_argument('--data_dir', type=Path, required=True)
     parser.add_argument('--output_dir', type=Path, required=True)
     parser.add_argument("--reduce_memory", action="store_true",
                         help="Store training data as on-disc memmaps to massively reduce memory usage")
@@ -68,6 +67,7 @@ def parse_arg():
                         default=3e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
+    parser.add_argument("--eps", default=1e-8, type=float, help='eps argument for Adam')
 
     args = parser.parse_args()
 

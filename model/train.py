@@ -30,19 +30,22 @@ def main():
     init_distributed_mode(args)
     logger = init_logger(args)
 
+    train_data_dir = args.data_dir / 'train'
+    dev_data_dir = args.data_dir / 'dev'
+
     if args.is_master:
         with (args.output_dir / 'config.json').open('w') as f:
             json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
 
         # copy the table bert config file to the working directory
-        shutil.copy(args.train_data.parent / 'config.json', args.output_dir / 'tb_config.json')
+        shutil.copy(args.data_dir / 'config.json', args.output_dir / 'tb_config.json')
 
-    assert args.train_data.is_dir(), \
-        "--train_data should point to the folder of files made by pregenerate_training_data.py!"
+    assert args.data_dir.is_dir(), \
+        "--data_dir should point to the folder of files made by pregenerate_training_data.py!"
 
     samples_per_epoch = []
     for i in range(args.epochs):
-        metrics_file = args.train_data / f"epoch_{i}.metrics.json"
+        metrics_file = train_data_dir / f"epoch_{i}.metrics.json"
         if metrics_file.is_file():
             metrics = json.loads(metrics_file.read_text())
             samples_per_epoch.append(metrics['num_training_examples'])
@@ -130,6 +133,7 @@ def main():
 
         optimizer = FusedAdam(optimizer_grouped_parameters,
                               lr=args.learning_rate,
+                              eps=args.eps,
                               bias_correction=False,
                               max_grad_norm=1.0)
         if args.loss_scale == 0:
@@ -155,16 +159,18 @@ def main():
     logger.info(f"  Num examples = {total_train_examples}")
     logger.info("  Batch size = %d", args.train_batch_size)
     logger.info("  Num steps = %d", num_train_optimization_steps)
+    logger.info(f"  Current config: {args}")
+
     model.train()
 
     # we also partitation the dev set for every local process
-    dev_set = TableDataset(epoch=0, training_path=args.dev_data, tokenizer=tokenizer, num_data_epochs=1,
+    dev_set = TableDataset(epoch=0, training_path=dev_data_dir, tokenizer=tokenizer, num_data_epochs=1,
                            reduce_memory=args.reduce_memory, multi_gpu=args.multi_gpu)
 
     evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
 
     for epoch in range(args.epochs):
-        epoch_dataset = TableDataset(epoch=epoch, training_path=args.train_data, tokenizer=tokenizer,
+        epoch_dataset = TableDataset(epoch=epoch, training_path=train_data_dir, tokenizer=tokenizer,
                                      num_data_epochs=num_data_epochs, reduce_memory=args.reduce_memory,
                                      multi_gpu=args.multi_gpu)
 

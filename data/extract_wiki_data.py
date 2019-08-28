@@ -14,19 +14,16 @@ import wikitextparser as wtq
 from data.WikiExtractor import pages_from, options, tagRE, Extractor, ignoreTag
 from data.htmltable import *
 
+__DEBUG__ = False
+
 # os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/jdk-12.0.1.jdk/Contents/Home'
 # os.environ['CLASSPATH'] = '/Users/pengcheng/Projects/tableBERT/target/tableBERT-1.0-SNAPSHOT-jar-with-dependencies.jar'
 
 _extractor = Extractor('', '', '', [])
 
 no_wiki_re = re.compile('<nowiki>.*</nowiki>')
-# center_re = re.compile('<center>.*</center>')
 syntax_hightlight_re = re.compile('<syntaxhighlight>.*</syntaxhighlight>')
 html_tag_re = re.compile(r'<.*?>')
-# span_re = re.compile('<span.*>')
-# span_close_re = re.compile('</span>')
-# div_re = re.compile('<div.*>')
-# div_close_re = re.compile()
 
 tag_regex_list = [no_wiki_re, syntax_hightlight_re]
 
@@ -66,13 +63,11 @@ class TableExtractor(multiprocessing.Process):
 
         job = self.job_queue.get()
         while job is not None:
-            id, revid, title, ns, catSet, page = job
+            uuid, (page_id, revid, title, ns, catSet, page) = job
             page_content = ''.join(page)
 
             try:
-                # if id == '6459':
-                for example in self.extract(id, title, page_content):
-                    # print(example)
+                for example in self.extract(uuid, page_id, title, page_content):
                     self.example_queue.put(example)
             except:
                 typ, value, tb = sys.exc_info()
@@ -82,7 +77,7 @@ class TableExtractor(multiprocessing.Process):
 
             job = self.job_queue.get()
 
-    def extract(self, id, title, page_content) -> Iterator[Dict]:
+    def extract(self, uuid, page_id, title, page_content) -> Iterator[Dict]:
         page_context = html.unescape(page_content)
         wiki_page = wtq.parse(page_context)
 
@@ -119,6 +114,7 @@ class TableExtractor(multiprocessing.Process):
             context = wiki_page[: context_end]
 
             cleaned_ctx = wiki2text(context)
+
             for regex in tag_regex_list:
                 cleaned_ctx = regex.sub('', cleaned_ctx)
             cleaned_ctx = html_tag_re.sub('', cleaned_ctx)
@@ -129,18 +125,16 @@ class TableExtractor(multiprocessing.Process):
                 if x
             ][-3:]
 
-            log = False
-            if False:
-                log = True
+            if __DEBUG__:
                 print('*** Total Text ***')
                 for text in cleaned_ctx:
                     print(text)
 
             cleaned_text = []
-            if log:
+            if __DEBUG__:
                 print('*** Sentence Cleaning ***')
             for text in cleaned_ctx:
-                if log:
+                if __DEBUG__:
                     print('Text: ', text)
 
                 text = text.strip('=')
@@ -152,17 +146,17 @@ class TableExtractor(multiprocessing.Process):
                 non_character_word_num = len(text_tokens) - character_word_num
 
                 if character_word_num < non_character_word_num:
-                    if log:
+                    if __DEBUG__:
                         print('Removing Tokens', text_tokens)
                     continue
 
                 if text:
                     cleaned_text.append(text)
 
-                    if log:
+                    if __DEBUG__:
                         print('Cleaned: ', text)
 
-            if log:
+            if __DEBUG__:
                 print('**** Cleaned Text ****')
                 print(cleaned_text)
 
@@ -181,18 +175,8 @@ class TableExtractor(multiprocessing.Process):
                     #     print('Sent: ', sent)
                 parsed_context.append(paragraph_sents)
 
-            # if log:
-            #     print('Parsed Context:')
-            #     print(parsed_context)
-
             table_html = self.mediaWikiToHtml.convert(str(table))
             table = self.extract_table_data(table_html)
-
-            # if log:
-            #     if table:
-            #         print('Table Header Information, ', table.header)
-            #     else:
-            #         print('No table found!')
 
             # if there is not any context
             if table and not parsed_context and not table.caption:
@@ -201,10 +185,8 @@ class TableExtractor(multiprocessing.Process):
             if table:
                 table = table.to_dict()
                 example = {
-                    'id': id,
-                    'title': title,
+                    'uuid': f'wiki-{page_id}-{"_".join(title.split())}-{uuid}',
                     'context': parsed_context,
-                    'source': 'wiki'
                 }
 
                 example.update(table)
@@ -269,8 +251,9 @@ def get_pages_from_data_dump(input_file):
 
 def data_loader_process(input_file, job_queue, num_workers):
     page_iter = get_pages_from_data_dump(input_file)
-    for data in page_iter:
-        job_queue.put(data)
+    for idx, data in enumerate(page_iter):
+        job = (idx, data)
+        job_queue.put(job)
 
     for i in range(num_workers):
         job_queue.put(None)

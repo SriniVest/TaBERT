@@ -19,7 +19,7 @@ from data.data_utils import split_token_coarse, RE_HTML_TAG
 from data.table import *
 
 
-__DEBUG__ = False
+__DEBUG__ = True
 
 
 def is_ascii(token):
@@ -32,7 +32,12 @@ def is_ascii(token):
 
 
 def has_invalid_tokens(text):
-    return '{' in text or '}' in text or ';)' in text or '=' in text or '()' in text or '[' in text or ']' in text
+    INVALID_CONTEXT_TOKENS = ['[', ']', '!', '{', '}', ';', '()', ');', '>', '<', '››']
+    return any(
+        token in text
+        for token
+        in INVALID_CONTEXT_TOKENS
+    )
 
 
 def remove_full_rowspans(rows):
@@ -66,8 +71,9 @@ def remove_invalid_columns(orig_cols):
                 break
 
             ascii_token_count = sum(is_ascii(w) for w in cell_tokens)
+            non_ascii_char_count = sum(ord(c) >= 128 for c in cell)
             non_ascii_token_count = len(cell_tokens) - ascii_token_count
-            if len(cell_tokens) > 0 and ascii_token_count == 0 or non_ascii_token_count > ascii_token_count or non_ascii_token_count > 2:
+            if len(cell_tokens) > 0 and ascii_token_count == 0 or non_ascii_token_count > ascii_token_count or non_ascii_char_count >= 2:
                 if __DEBUG__:
                     print('invalid cell for ascii rule: ', cell)
                 is_valid_col = False
@@ -172,6 +178,7 @@ class ContextProcessor(object):
 
     def clean_context(self, text):
         text = RE_HTML_TAG.sub('', text)
+        text = text.replace('“', '\"').replace("”", '\"').replace('—', '-').replace('•', '')
         text = re.sub(r'\s+', ' ', text).strip()
 
         if not text:
@@ -186,11 +193,17 @@ class ContextProcessor(object):
             if has_invalid_tokens(sent.text):
                 continue
 
-            num_alpha = sum(w.is_alpha for w in sent)
+            non_ascii_char_count = sum(ord(c) >= 128 for c in sent.text)
+            if non_ascii_char_count >= 3:
+                if __DEBUG__:
+                    print('Invalid sentence: ', sent)
+                continue
+
+            num_alpha = sum(w.is_ascii and w.is_alpha for w in sent)
             if num_alpha == 0:
                 continue
 
-            num_non_alpha = sum(not w.is_alpha for w in sent)
+            num_non_alpha = len(sent) - num_alpha  # sum(not w.is_alpha for w in sent)
             if num_non_alpha >= num_alpha:
                 continue
 
@@ -391,7 +404,8 @@ def debug():
     worker = CommonCrawlTableExtractor(None, None, daemon=True)
     example = process_example(json.loads(example_dict), ContextProcessor(), spacy.load('en_core_web_sm'))
 
+
 if __name__ == '__main__':
-    # process()
-    debug()
+    process()
+    # debug()
 

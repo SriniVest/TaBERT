@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Dict, Optional, Iterator
 import multiprocessing
+import unicodedata
 
 import spacy
 from tqdm import tqdm
@@ -17,6 +18,17 @@ from data.htmltable import *
 # os.environ['CLASSPATH'] = '/Users/pengcheng/Projects/tableBERT/target/tableBERT-1.0-SNAPSHOT-jar-with-dependencies.jar'
 
 _extractor = Extractor('', '', '', [])
+
+no_wiki_re = re.compile('<nowiki>.*</nowiki>')
+# center_re = re.compile('<center>.*</center>')
+syntax_hightlight_re = re.compile('<syntaxhighlight>.*</syntaxhighlight>')
+html_tag_re = re.compile(r'<.*?>')
+# span_re = re.compile('<span.*>')
+# span_close_re = re.compile('</span>')
+# div_re = re.compile('<div.*>')
+# div_close_re = re.compile()
+
+tag_regex_list = [no_wiki_re, syntax_hightlight_re]
 
 
 def wiki2text(wiki_text):
@@ -58,6 +70,7 @@ class TableExtractor(multiprocessing.Process):
             page_content = ''.join(page)
 
             try:
+                # if id == '6459':
                 for example in self.extract(id, title, page_content):
                     # print(example)
                     self.example_queue.put(example)
@@ -104,21 +117,82 @@ class TableExtractor(multiprocessing.Process):
             tab_span = table.span
             context_end = tab_span[0]
             context = wiki_page[: context_end]
+
             cleaned_ctx = wiki2text(context)
-            cleaned_ctx = [x for x in cleaned_ctx.strip().split('\n') if x][-3:]
-            if any('|' in x for x in cleaned_ctx) or any('{' in x for x in cleaned_ctx):
+            for regex in tag_regex_list:
+                cleaned_ctx = regex.sub('', cleaned_ctx)
+            cleaned_ctx = html_tag_re.sub('', cleaned_ctx)
+
+            cleaned_ctx = [
+                x
+                for x in cleaned_ctx.strip().split('\n')
+                if x
+            ][-3:]
+
+            log = False
+            if False:
+                log = True
+                print('*** Total Text ***')
+                for text in cleaned_ctx:
+                    print(text)
+
+            cleaned_text = []
+            if log:
+                print('*** Sentence Cleaning ***')
+            for text in cleaned_ctx:
+                if log:
+                    print('Text: ', text)
+
+                text = text.strip('=')
+                text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf8').replace('()', '')
+                text = re.sub(r'\s+', ' ', text).strip()
+
+                text_tokens = text.replace(', ', ' , ').split(' ')
+                character_word_num = sum(1 for token in text_tokens if token.isalpha())
+                non_character_word_num = len(text_tokens) - character_word_num
+
+                if character_word_num < non_character_word_num:
+                    if log:
+                        print('Removing Tokens', text_tokens)
+                    continue
+
+                if text:
+                    cleaned_text.append(text)
+
+                    if log:
+                        print('Cleaned: ', text)
+
+            if log:
+                print('**** Cleaned Text ****')
+                print(cleaned_text)
+
+            if any('|' in x for x in cleaned_text) or any('{' in x for x in cleaned_text):
                 continue
 
             parsed_context = []
-            for paragraph in cleaned_ctx:
+            for paragraph in cleaned_text:
                 paragraph_sents = []
                 parsed_paragraph = self.nlp(paragraph)
+                # if log:
+                #     print('Paragraph: ', parsed_paragraph)
                 for sent in parsed_paragraph.sents:
                     paragraph_sents.append(sent.text)
+                    # if log:
+                    #     print('Sent: ', sent)
                 parsed_context.append(paragraph_sents)
+
+            # if log:
+            #     print('Parsed Context:')
+            #     print(parsed_context)
 
             table_html = self.mediaWikiToHtml.convert(str(table))
             table = self.extract_table_data(table_html)
+
+            # if log:
+            #     if table:
+            #         print('Table Header Information, ', table.header)
+            #     else:
+            #         print('No table found!')
 
             # if there is not any context
             if table and not parsed_context and not table.caption:
@@ -129,7 +203,8 @@ class TableExtractor(multiprocessing.Process):
                 example = {
                     'id': id,
                     'title': title,
-                    'context': parsed_context
+                    'context': parsed_context,
+                    'source': 'wiki'
                 }
 
                 example.update(table)

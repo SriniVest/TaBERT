@@ -56,6 +56,17 @@ def debug_print(stuff):
     for x in stuff:
         print >> sys.stderr, [simple_normalize_text(y[1]) for y in x]
 
+
+def horizontal_to_vertical(rows):
+    if rows:
+        is_vertical_table = all(cell[0] == 'th' for cell in rows[0])
+        if not is_vertical_table:
+            is_horizontal_table = all(row[0][0] == 'th' for row in rows)
+            if is_horizontal_table and rows:
+                rows = transpose(rows)
+
+    return rows
+
 def transpose(rows):
     cols = []
     n = max(len(row) for row in rows)
@@ -123,6 +134,18 @@ def merge_similar_columns(orig_cols):
             i += 1
     return orig_cols
 
+def remove_empty_rows(orig_rows):
+    """remove empty rows"""
+    rows = []
+    for row in orig_rows:
+        if row:
+            if row[0][0] == 'th':
+                rows.append(row)
+            elif sum(1 for cell in row if cell[1]) >= 2:
+                rows.append(row)
+
+    return rows
+
 #### Merge header rows
 
 def merge_header_rows(orig_rows):
@@ -188,7 +211,7 @@ class HtmlTable(object):
                         rows[0].decompose()
 
         if self.caption:
-            self.caption = re.sub('\[\d+\]$', '', self.caption)
+            self.caption = re.sub(r'(\[\d+\])+$', '', self.caption)
 
         if remove_hidden:
             self.remove_hidden()
@@ -313,10 +336,17 @@ class HtmlTable(object):
     def clean(self):
         rows = self.rows
         rows = remove_full_rowspans(rows)
+        rows = horizontal_to_vertical(rows)
+        rows = remove_empty_rows(rows)
+
         if rows:
+            # print('Rows: ')
+            # print(rows)
             cols = transpose(rows)
             cols = merge_similar_columns(cols)
+            # print('Before removing empty columns:', cols)
             cols = remove_empty_columns(cols)
+            # print('After removing empty columns', cols)
 
             if cols:
                 rows = anti_transpose(cols)

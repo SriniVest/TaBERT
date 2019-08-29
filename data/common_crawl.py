@@ -19,7 +19,7 @@ from data.data_utils import split_token_coarse, RE_HTML_TAG
 from data.table import *
 
 
-__DEBUG__ = True
+__DEBUG__ = False
 
 
 def is_ascii(token):
@@ -32,7 +32,7 @@ def is_ascii(token):
 
 
 def has_invalid_tokens(text):
-    INVALID_CONTEXT_TOKENS = ['[', ']', '!', '{', '}', ';', '()', ');', '>', '<', '››']
+    INVALID_CONTEXT_TOKENS = ['[', ']', '!', '{', '}', ';', '()', ');', '>', '<', '›']
     return any(
         token in text
         for token
@@ -71,7 +71,7 @@ def remove_invalid_columns(orig_cols):
                 break
 
             ascii_token_count = sum(is_ascii(w) for w in cell_tokens)
-            non_ascii_char_count = sum(ord(c) >= 128 for c in cell)
+            non_ascii_char_count = sum(ord(c) >= 128 and c not in ALLOWED_SPECIAL_SYMBOLS for c in cell)
             non_ascii_token_count = len(cell_tokens) - ascii_token_count
             if len(cell_tokens) > 0 and ascii_token_count == 0 or non_ascii_token_count > ascii_token_count or non_ascii_char_count >= 2:
                 if __DEBUG__:
@@ -168,6 +168,9 @@ def transpose(data):
     return data_t
 
 
+ALLOWED_SPECIAL_SYMBOLS = {'£', '°', '§', '€'}
+
+
 class ContextProcessor(object):
     def __init__(self):
         nlp = English()  # just the language with no model
@@ -178,7 +181,7 @@ class ContextProcessor(object):
 
     def clean_context(self, text):
         text = RE_HTML_TAG.sub('', text)
-        text = text.replace('“', '\"').replace("”", '\"').replace('—', '-').replace('•', '')
+        text = text.replace('“', '\"').replace("”", '\"').replace('’', "'").replace('—', '-').replace('•', '')
         text = re.sub(r'\s+', ' ', text).strip()
 
         if not text:
@@ -193,8 +196,8 @@ class ContextProcessor(object):
             if has_invalid_tokens(sent.text):
                 continue
 
-            non_ascii_char_count = sum(ord(c) >= 128 for c in sent.text)
-            if non_ascii_char_count >= 3:
+            non_ascii_char_count = sum(ord(c) >= 128 and c not in ALLOWED_SPECIAL_SYMBOLS for c in sent.text)
+            if non_ascii_char_count >= 2:
                 if __DEBUG__:
                     print('Invalid sentence: ', sent)
                 continue
@@ -319,16 +322,21 @@ class CommonCrawlTableExtractor(multiprocessing.Process):
 
 
 def data_loader_process(input_file: Path,
+                        file_filter: str,
                         job_queue: multiprocessing.Queue,
                         num_workers: multiprocessing.Queue):
     if input_file.is_dir():
-        files = input_file.glob('*.tar.gz')
+        files = list(input_file.glob(file_filter))
+        print('Working on {}'.format([f.name for f in files]), file=sys.stderr)
+        sys.stderr.flush()
     else:
         files = [input_file]
 
     pbar = tqdm(file=sys.stdout)
     for file in files:
         print(f'parsing {file}', file=sys.stderr)
+        sys.stderr.flush()
+
         if file.name.endswith('.tar.gz'):
             with tarfile.open(str(file), "r:gz") as outer_tar:
                 for tar_m in outer_tar.getmembers():
@@ -366,17 +374,18 @@ def example_writer_process(output_file, example_queue):
 def process():
     parser = ArgumentParser()
     parser.add_argument('--input_file', type=Path, required=True)
+    parser.add_argument('--filter', type=str, default='*.tar.gz', required=False)
     parser.add_argument("--output_file", type=Path, required=True)
+    parser.add_argument('--worker_num', type=int, default=multiprocessing.cpu_count() - 1, required=False)
 
     args = parser.parse_args()
 
     job_queue = multiprocessing.Queue(maxsize=2000)
     example_queue = multiprocessing.Queue()
-    num_workers = multiprocessing.cpu_count() - 1
-    # num_workers = 1
+    num_workers = args.worker_num
 
     loader = multiprocessing.Process(target=data_loader_process, daemon=True,
-                                     args=(args.input_file, job_queue, num_workers))
+                                     args=(args.input_file, args.filter, job_queue, num_workers))
     loader.start()
 
     workers = []

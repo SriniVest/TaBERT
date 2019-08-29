@@ -186,7 +186,7 @@ class TableExtractor(multiprocessing.Process):
                 table = table.to_dict()
                 example = {
                     'uuid': f'wiki-{page_id}-{"_".join(title.split())}-{uuid}',
-                    'context': parsed_context,
+                    'context_before': parsed_context,
                 }
 
                 example.update(table)

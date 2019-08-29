@@ -248,7 +248,7 @@ class Example(object):
     @classmethod
     def from_dict(cls, entry: Dict, tokenizer: Optional[BertTokenizer], suffix) -> 'Example':
         def _get_data_source():
-            return 'common_crawl' if 'context_before' in entry else 'wiki'
+            return 'wiki' if 'wiki' in entry['uuid'] else 'common_crawl'
 
         source = _get_data_source()
 
@@ -285,7 +285,7 @@ class Example(object):
         context_after = []
 
         if source == 'wiki':
-            for para in entry['context']:
+            for para in entry['context_before']:
                 for sent in para:
                     if tokenizer:
                         sent = tokenizer.tokenize(sent)
@@ -298,8 +298,6 @@ class Example(object):
                     caption = tokenizer.tokenize(entry['caption'])
 
                 context_before.append(caption)
-
-            uuid = f"{source}_{entry['id']}_{entry['title']}"
         else:
             for sent in entry['context_before']:
                 if tokenizer:
@@ -311,7 +309,7 @@ class Example(object):
                     sent = tokenizer.tokenize(sent)
                 context_after.append(sent)
 
-            uuid = entry['uuid']
+        uuid = entry['uuid']
 
         return cls(uuid, header,
                    [context_before, context_after],

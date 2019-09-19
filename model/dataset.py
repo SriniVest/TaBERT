@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Dict, Optional, Iterator, Set
 
 import numpy as np
-import redis
 import torch
 import zmq
 from pytorch_pretrained_bert import BertTokenizer
@@ -78,7 +77,7 @@ class DistributedSampler(Sampler):
 
 
 class TableDataset(Dataset):
-    def __init__(self, training_path, epoch, tokenizer, num_data_epochs, reduce_memory=False, multi_gpu=False):
+    def __init__(self, training_path, epoch, tokenizer, reduce_memory=False, multi_gpu=False):
         self.vocab = tokenizer.vocab
         self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
@@ -165,7 +164,7 @@ class TableDataset(Dataset):
         return self.examples[item]
 
     @staticmethod
-    def collate(examples, tokenizer):
+    def collate(examples):
         batch_size = len(examples)
         max_len = max(len(e['token_ids']) for e in examples)
 
@@ -188,10 +187,13 @@ class TableDataset(Dataset):
             segment_array[e_id, example['sequence_a_length']:] = 1
             lm_label_array[e_id, masked_lm_positions] = masked_label_ids
 
-        return (torch.tensor(input_array.astype(np.int64)),
-                torch.tensor(mask_array.astype(np.int64)),
-                torch.tensor(segment_array.astype(np.int64)),
-                torch.tensor(lm_label_array.astype(np.int64)))
+        # input_ids, input_mask, segment_ids, lm_label_ids
+        return {
+            'input_ids': torch.tensor(input_array.astype(np.int64)),
+            'attention_mask': torch.tensor(mask_array.astype(np.int64)),
+            'token_type_ids': torch.tensor(segment_array.astype(np.int64)),
+            'masked_lm_labels': torch.tensor(lm_label_array.astype(np.int64))
+        }
 
 
 class Column(object):
@@ -319,6 +321,8 @@ class Example(object):
 
 class TableDatabase:
     def __init__(self):
+        import redis
+
         self.restore_client()
         self.client.flushall(asynchronous=False)
         self._cur_index = multiprocessing.Value('i', 0)

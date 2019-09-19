@@ -1,7 +1,12 @@
 import logging
 from argparse import ArgumentParser
 from pathlib import Path
+
 import torch
+
+from fairseq.options import eval_str_list
+from fairseq.optim.adam import FairseqAdam
+from fairseq.optim.lr_scheduler.polynomial_decay_schedule import PolynomialDecaySchedule
 
 
 def parse_arg():
@@ -10,7 +15,7 @@ def parse_arg():
                         type=int,
                         default=42,
                         help="random seed for initialization")
-    parser.add_argument("--no_cuda",
+    parser.add_argument("--cpu",
                         action='store_true',
                         help="Whether not to use CUDA when available")
 
@@ -37,16 +42,33 @@ def parse_arg():
     parser.add_argument("--debug_slurm", action='store_true',
                         help="Debug multi-GPU / multi-node within a SLURM job")
 
+    # training details
     parser.add_argument("--train_batch_size",
                         default=32,
                         type=int,
                         help="Total batch size for training.")
-    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs to train for")
+    parser.add_argument("--num_train_steps", type=int, default=100000, help="Number of steps to train for")
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
+    parser.add_argument("--lr_scheduler", type=str, default='polynomial_decay', help='Learning rate scheduler')
+    parser.add_argument("--optimizer", type=str, default='adam', help='Optimizer to use')
+    parser.add_argument("--warmup_proportion",
+                        default=0.1,
+                        type=float,
+                        help="Proportion of training to perform linear learning rate warmup for. "
+                             "E.g., 0.1 = 10%% of training.")
+    parser.add_argument('--lr', '--learning_rate', default='0.25', type=eval_str_list,
+                        metavar='LR_1,LR_2,...,LR_N',
+                        help='learning rate for the first N epochs; all epochs >N using LR_N'
+                             ' (note: this may be interpreted differently depending on --lr-scheduler)')
+    parser.add_argument('--clip_norm', default=0., type=float, help='clip gradient')
 
+    FairseqAdam.add_args(parser)
+    PolynomialDecaySchedule.add_args(parser)
+
+    # FP16 training
     parser.add_argument('--fp16',
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
@@ -57,17 +79,6 @@ def parse_arg():
                              "Positive power of 2: static loss scaling value.\n")
     parser.add_argument('--fp16_init_scale', type=float, default=128)
     parser.add_argument('--fp16_scale_window', type=int, default=1000)
-
-    parser.add_argument("--warmup_proportion",
-                        default=0.1,
-                        type=float,
-                        help="Proportion of training to perform linear learning rate warmup for. "
-                             "E.g., 0.1 = 10%% of training.")
-    parser.add_argument("--learning_rate",
-                        default=3e-5,
-                        type=float,
-                        help="The initial learning rate for Adam.")
-    parser.add_argument("--eps", default=1e-8, type=float, help='eps argument for Adam')
 
     args = parser.parse_args()
 

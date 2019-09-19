@@ -29,7 +29,7 @@ class Evaluator(object):
         with torch.no_grad():
             data_loader = DataLoader(dataset,
                                      batch_size=self.batch_size, sampler=SequentialSampler(dataset),
-                                     collate_fn=partial(dataset.collate, tokenizer=dataset.tokenizer))
+                                     collate_fn=dataset.collate)
 
             loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
 

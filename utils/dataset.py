@@ -1,4 +1,5 @@
 import json
+import ujson
 import logging
 import math
 import multiprocessing
@@ -7,7 +8,8 @@ import sys
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Optional, Iterator, Set
+from typing import Dict, Optional, Iterator, Set, List
+import redis
 
 import numpy as np
 import torch
@@ -20,7 +22,7 @@ from tqdm import tqdm
 
 
 class DistributedSampler(Sampler):
-    """Sampler that restricts data loading to a subset of the dataset.
+    """Sampler that restricts preprocess loading to a subset of the dataset.
 
     It is especially useful in conjunction with
     :class:`torch.nn.parallel.DistributedDataParallel`. In such case, each
@@ -220,6 +222,26 @@ class Column(object):
         return data
 
 
+class Table(object):
+    def __init__(self, id, header, data=None, **kwargs):
+        self.id = id
+        self.header = header
+        self.data: List[Dict] = data
+        self.fields = []
+
+        for key, val in kwargs.items():
+            self.fields.append(key)
+            setattr(self, key, val)
+
+    def with_rows(self, rows):
+        extra_fields = {f: getattr(self, f) for f in self.fields}
+
+        return Table(self.id, self.header, data=rows, **extra_fields)
+
+    def __len__(self):
+        return len(self.data)
+
+
 class Example(object):
     def __init__(self, uuid, header, context, column_data=None, **kwargs):
         self.uuid = uuid
@@ -269,7 +291,7 @@ class Example(object):
             header.append(column)
 
         if source == 'wiki':
-            for row in entry['data'][1:]:
+            for row in entry['preprocess'][1:]:
                 for col_id, (tag, cell_val) in enumerate(row):
                     if col_id >= len(column_data):
                         column_data.append([])
@@ -321,8 +343,6 @@ class Example(object):
 
 class TableDatabase:
     def __init__(self):
-        import redis
-
         self.restore_client()
         self.client.flushall(asynchronous=False)
         self._cur_index = multiprocessing.Value('i', 0)
@@ -375,9 +395,9 @@ class TableDatabase:
             job = job_receiver.recv_string()
             if job:
                 cnt += 1
-                example = Example.from_dict(json.loads(job), tokenizer, suffix=None)
+                example = Example.from_dict(ujson.loads(job), tokenizer, suffix=None)
 
-                # TODO: move this to data pre-processing
+                # TODO: move this to preprocess pre-processing
                 if any(len(col.name.split(' ')) > 10 for col in example.header):
                     continue
 
@@ -385,7 +405,7 @@ class TableDatabase:
                     continue
 
                 data = example.serialize()
-                buffer.append(json.dumps(data))
+                buffer.append(ujson.dumps(data))
 
                 if len(buffer) >= buffer_size:
                     _add_to_cache()

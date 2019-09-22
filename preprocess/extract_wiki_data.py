@@ -11,8 +11,8 @@ import unicodedata
 import spacy
 from tqdm import tqdm
 import wikitextparser as wtq
-from data.WikiExtractor import pages_from, options, tagRE, Extractor, ignoreTag
-from data.htmltable import *
+from preprocess.WikiExtractor import pages_from, options, tagRE, Extractor, ignoreTag
+from preprocess.htmltable import *
 
 __DEBUG__ = False
 

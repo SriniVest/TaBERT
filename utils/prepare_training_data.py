@@ -3,9 +3,8 @@ import os, sys
 import time
 import traceback
 from argparse import ArgumentParser, Namespace
-from math import floor, ceil
 from multiprocessing import connection
-from typing import List, Dict, Iterator
+from typing import List, Iterator
 import numpy as np
 import json
 import ujson
@@ -21,7 +20,9 @@ from random import shuffle, choice, sample, random
 
 from pytorch_pretrained_bert import *
 
-from model.dataset import Example, TableDatabase
+from model.input_formatter import VanillaTableBertInputFormatter
+from utils.config import TableBertConfig
+from utils.dataset import Example, TableDatabase
 
 TRAIN_INSTANCE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15566'
 EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'
@@ -84,166 +85,6 @@ def sample_context(example: Example, max_context_length: int, context_sample_str
         raise RuntimeError('Unknown context sample strategy')
 
 
-def create_training_instances_from_example(
-    example: Example,
-    args: Namespace,
-    tokenizer: BertTokenizer,
-    vocab_list: list,
-) -> List[Dict]:
-    instances = []
-    context_iter = sample_context(example, args.max_context_len, context_sample_strategy=args.context_sample_strategy)
-    for context in context_iter:
-        context_tokens = context
-
-        if args.context_first:
-            table_tokens_start_idx = len(context_tokens) + 2  # account for [CLS] and [SEP]
-            max_table_token_length = args.max_seq_len - len(context_tokens) - 2 - 1  # account for [CLS] and [SEP], and the ending [SEP]
-        else:
-            table_tokens_start_idx = 1  # account for starting [CLS]
-            max_table_token_length = args.max_seq_len - len(context_tokens) - 2 - 1  # account for [CLS] and [SEP], and the ending [SEP]
-
-        # generate table tokens
-        table_tokens = []
-        column_candidate_indices: List[List] = []
-
-        for col_id, column in enumerate(example.header):
-            col_tokens = list(column.name_tokens)
-            col_name_indices = list(range(table_tokens_start_idx, table_tokens_start_idx + len(column.name_tokens)))
-
-            col_tokens += [args.column_item_delimiter] + [column.type]
-
-            if random() < 0.01:
-                col_type_indices = [col_name_indices[-1] + 1, col_name_indices[-1] + 2, col_name_indices[-1] + 3]
-            else:
-                col_type_indices = [col_name_indices[-1] + 2]  # skip the separator
-
-            col_values = example.column_data[col_id]
-            # print(col_values)
-            col_values = [val for val in col_values if val is not None and len(val) > 0]
-            sampled_value = choice(col_values)
-            # print('chosen value', sampled_value)
-            sampled_value_tokens = tokenizer.tokenize(sampled_value)
-
-            col_tokens += [args.column_item_delimiter] + sampled_value_tokens[:5]
-            col_tokens += [args.column_delimiter]
-
-            _col_cand_indices = col_name_indices + col_type_indices
-
-            table_tokens += col_tokens
-            column_candidate_indices.append(_col_cand_indices)
-
-            if len(table_tokens) >= max_table_token_length:
-                table_tokens = table_tokens[:max_table_token_length]
-                column_candidate_indices[-1] = [idx for idx in column_candidate_indices[-1] if idx < args.max_seq_len - 1]
-
-                break
-
-            table_tokens_start_idx += len(col_tokens)
-
-        if table_tokens[-1] == args.column_delimiter:
-            del table_tokens[-1]  # remove last delimiter
-
-        if args.context_first:
-            sequence = ['[CLS]'] + context_tokens + ['[SEP]'] + table_tokens + ['[SEP]']
-            # segment_ids = [0] * (len(context_tokens) + 2) + [1] * (len(table_tokens) + 1)
-            segment_a_length = len(context_tokens) + 2
-
-            # Account for [CLS], [SEP]
-            context_candidate_indices = list(range(1, 1 + len(context_tokens)))
-        else:
-            sequence = ['[CLS]'] + table_tokens + ['[SEP]'] + context_tokens + ['[SEP]']
-            # segment_ids = [0] * (len(table_tokens) + 2) + [1] * (len(context_tokens) + 1)
-            segment_a_length = len(table_tokens) + 2
-            context_candidate_indices = list(range(len(table_tokens) + 2, len(sequence) - 1))
-
-        masked_sequence, masked_lm_positions, masked_lm_labels, info = create_masked_lm_predictions(
-            sequence, context_candidate_indices, column_candidate_indices,
-            vocab_list, args
-        )
-
-        info['num_columns'] = len(example.header)
-
-        instance = {
-            "tokens": masked_sequence,
-            "token_ids": tokenizer.convert_tokens_to_ids(masked_sequence),
-            "segment_a_length": segment_a_length,
-            "masked_lm_positions": masked_lm_positions,
-            "masked_lm_labels": masked_lm_labels,
-            "masked_lm_label_ids": tokenizer.convert_tokens_to_ids(masked_lm_labels),
-            "source": example.source,
-            "info": info
-        }
-
-        instances.append(instance)
-
-    return instances
-
-
-def create_masked_lm_predictions(
-    tokens, context_indices, column_indices,
-    vocab_list,
-    args: Namespace
-):
-    table_mask_strategy = args.table_mask_strategy
-    info = dict()
-    info['num_maskable_column_tokens'] = sum(len(token_ids) for token_ids in column_indices)
-    if table_mask_strategy == 'column_token':
-        column_indices = [i for l in column_indices for i in l]
-        num_column_tokens_to_mask = min(args.max_predictions_per_seq,
-                                        max(2, int(len(column_indices) * args.masked_column_prob)))
-        shuffle(column_indices)
-        masked_column_token_indices = sorted(sample(column_indices, num_column_tokens_to_mask))
-    elif table_mask_strategy == 'column':
-        num_maskable_columns = len(column_indices)
-        num_column_to_mask = max(1, ceil(num_maskable_columns * args.masked_column_prob))
-        columns_to_mask = sorted(sample(list(range(num_maskable_columns)), num_column_to_mask))
-        shuffle(columns_to_mask)
-        num_column_tokens_to_mask = sum(len(column_indices[i]) for i in columns_to_mask)
-        masked_column_token_indices = [idx for col in columns_to_mask for idx in column_indices[col]]
-        info['num_masked_columns'] = num_column_to_mask
-    else:
-        raise RuntimeError('unknown mode!')
-
-    max_context_token_to_mask = args.max_predictions_per_seq - num_column_tokens_to_mask
-    num_context_tokens_to_mask = min(max_context_token_to_mask,
-                                     max(1, int(len(context_indices) * args.masked_context_prob)))
-
-    if num_context_tokens_to_mask > 0:
-        # if num_context_tokens_to_mask < 0 or num_context_tokens_to_mask > len(context_indices):
-        #     for col_id in columns_to_mask:
-        #         print([tokens[i] for i in column_indices[col_id]])
-        #     print(num_context_tokens_to_mask, num_column_tokens_to_mask)
-        shuffle(context_indices)
-        masked_context_token_indices = sorted(sample(context_indices, num_context_tokens_to_mask))
-        masked_indices = sorted(masked_context_token_indices + masked_column_token_indices)
-    else:
-        masked_indices = masked_column_token_indices
-
-    masked_token_labels = []
-
-    for index in masked_indices:
-        # 80% of the time, replace with [MASK]
-        if random() < 0.8:
-            masked_token = "[MASK]"
-        else:
-            # 10% of the time, keep original
-            if random() < 0.5:
-                masked_token = tokens[index]
-            # 10% of the time, replace with random word
-            else:
-                masked_token = choice(vocab_list)
-        masked_token_labels.append(tokens[index])
-        # Once we've saved the true label for that token, we can overwrite it with the masked version
-        tokens[index] = masked_token
-
-    info.update({
-        'num_column_tokens_to_mask': num_column_tokens_to_mask,
-        'num_context_tokens_to_mask': num_context_tokens_to_mask,
-    })
-
-    return tokens, masked_indices, masked_token_labels, info
-
-
 def __create_masked_lm_predictions_deprecated(tokens, context_indices, column_indices,
                                  masked_context_token_prob, mask_column_token_prob,
                                  max_predictions_per_seq, vocab_list):
@@ -289,7 +130,13 @@ def __create_masked_lm_predictions_deprecated(tokens, context_indices, column_in
     return tokens, masked_indices, masked_token_labels
 
 
-def generate_train_instance_from_example(table_db: TableDatabase, indices: List[int], status_queue: multiprocessing.Queue, args: Namespace, debug_file: Path = None):
+def generate_train_instance_from_example(
+    table_db: TableDatabase,
+    indices: List[int],
+    status_queue: multiprocessing.Queue,
+    args: Namespace,
+    debug_file: Path = None
+):
     context = zmq.Context()
     instance_sender = context.socket(zmq.PUSH)
     # instance_sender.setsockopt(zmq.LINGER, -1)
@@ -297,11 +144,11 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
 
     table_db.restore_client()
 
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-    vocab_list = list(tokenizer.vocab.keys())
-
     if debug_file:
         f_dbg = open(debug_file, 'w')
+
+    table_bert_config = TableBertConfig.from_dict(vars(args))
+    bert_input_formatter = VanillaTableBertInputFormatter(table_bert_config)
 
     # print('started queues')
     num_processed = 0
@@ -309,12 +156,8 @@ def generate_train_instance_from_example(table_db: TableDatabase, indices: List[
         example = table_db[idx]
         # print('get one example')
         try:
-            instances = create_training_instances_from_example(
-                example,
-                tokenizer=tokenizer,
-                vocab_list=vocab_list,
-                args=args
-            )
+            instances = bert_input_formatter.get_pretraining_instances_from_example(example, sample_context)
+
             for instance in instances:
                 if debug_file:
                     f_dbg.write(json.dumps(instance) + os.linesep)
@@ -479,7 +322,7 @@ def generate_for_epoch(table_db: TableDatabase,
     with metrics_file.open('w') as f:
         metrics = {
             "num_training_examples": num_instances,
-            "max_seq_len": args.max_seq_len,
+            "max_seq_len": args.max_sequence_len,
             "shard_num": shard_num
         }
         f.write(json.dumps(metrics))
@@ -489,42 +332,14 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
-    parser.add_argument("--bert_model", type=str, required=True,
-                        choices=["bert-base-uncased", "bert-large-uncased", "bert-base-cased",
-                                 "bert-base-multilingual", "bert-base-chinese"])
-    parser.add_argument("--do_lower_case", action="store_true")
-
-    parser.add_argument("--reduce_memory", action="store_true",
-                        help="Reduce memory usage for large datasets by keeping data on disc rather than in memory")
-
     parser.add_argument("--epochs_to_generate", type=int, default=3,
-                        help="Number of epochs of data to pregenerate")
-    parser.add_argument("--max_seq_len", type=int, default=512)
-    parser.add_argument("--max_context_len", type=int, default=256)
-    parser.add_argument("--masked_context_prob", type=float, default=0.15,
-                        help="Probability of masking each token for the LM task")
-    parser.add_argument("--masked_column_prob", type=float, default=0.20,
-                        help="Probability of masking each token for the LM task")
-    parser.add_argument("--max_predictions_per_seq", type=int, default=100,
-                        help="Maximum number of tokens to mask in each sequence")
-    parser.add_argument('--context_sample_strategy', type=str, default='nearest',
-                        choices=['nearest', 'concate_and_enumerate'])
-    parser.add_argument('--table_mask_strategy', type=str, default='column_token',
-                        choices=['column', 'column_token'])
-    parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
-    parser.add_argument("--column_item_delimiter", type=str, default='|', help='Column item delimiter')
-
-    parser.add_argument('--context_first', dest='context_first', action='store_true')
-    parser.add_argument('--table_first', dest='context_first', action='store_false')
-    parser.set_defaults(context_first=True)
-
+                        help="Number of epochs of preprocess to pregenerate")
     parser.add_argument('--no_wiki_tables_from_common_crawl', action='store_true', default=False)
 
+    TableBertConfig.add_args(parser)
+
     args = parser.parse_args()
-
-    global tokenizer
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-
+    tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
         print(f'Num entries in database: {len(table_db)}', file=sys.stderr)
@@ -542,7 +357,7 @@ def main():
         (args.output_dir / 'train').mkdir(exist_ok=True)
         (args.output_dir / 'dev').mkdir(exist_ok=True)
 
-        # generate dev data first
+        # generate dev preprocess first
         dev_file = args.output_dir / 'dev' / 'epoch_0'
         dev_metrics_file = args.output_dir / 'dev' / "epoch_0.metrics.json"
         generate_for_epoch(table_db, dev_indices, dev_file, dev_metrics_file, args)

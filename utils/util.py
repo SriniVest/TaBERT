@@ -21,15 +21,13 @@ def parse_arg():
 
     parser.add_argument('--data_dir', type=Path, required=True)
     parser.add_argument('--output_dir', type=Path, required=True)
-    parser.add_argument("--reduce_memory", action="store_true",
-                        help="Store training data as on-disc memmaps to massively reduce memory usage")
 
-    parser.add_argument("--bert_model", type=str, required=True,
+    parser.add_argument("--base_model_name", type=str, required=False,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-                             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.")
+                             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+                        default='bert-base-uncased')
     parser.add_argument('--no_init', action='store_true', default=False)
-    parser.add_argument('--config_file', type=str, help='model config file if do not use pre-trained BERT model.')
-    parser.add_argument("--do_lower_case", action="store_true")
+    parser.add_argument('--config_file', type=Path, help='model config file if do not use pre-trained BERT model.')
 
     # distributed training
     parser.add_argument("--ddp_backend", type=str, default='pytorch', choices=['pytorch', 'apex'])

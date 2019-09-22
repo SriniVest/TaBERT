@@ -571,7 +571,7 @@ class Extractor(object):
             }
             if options.print_revision:
                 json_data['revid'] = self.revid
-            # We don't use json.dump(data, out) because we want to be
+            # We don't use json.dump(preprocess, out) because we want to be
             # able to encode the string if the output is sys.stdout
             out_str = json.dumps(json_data, ensure_ascii=False)
             if out == sys.stdout:   # option -a or -o -
@@ -2705,7 +2705,7 @@ class OutputSplitter(object):
         :param nextFile: a NextFile object from which to obtain filenames
             to use.
         :param max_file_size: the maximum size of each file.
-        :para compress: whether to write data with bzip compression.
+        :para compress: whether to write preprocess with bzip compression.
         """
         self.nextFile = nextFile
         self.compress = compress
@@ -2859,7 +2859,7 @@ def process_dump(input_file, template_file, out_file, file_size, file_compress,
     """
     :param input_file: name of the wikipedia dump file; '-' to read from stdin
     :param template_file: optional file with template definitions.
-    :param out_file: directory where to store extracted data, or '-' for stdout
+    :param out_file: directory where to store extracted preprocess, or '-' for stdout
     :param file_size: max size of each extracted file, or None for no max (one file)
     :param file_compress: whether to compress files with bzip.
     :param process_count: number of extraction processes to spawn.

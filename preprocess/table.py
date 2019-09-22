@@ -1,8 +1,7 @@
-import re
 from typing import List
 
-from data import data_utils
-from model.dataset import Column
+from preprocess import data_utils
+from utils.dataset import Column
 
 TABLE_MIN_ROW_NUM = 3
 TABLE_MIN_COL_NUM = 2
@@ -29,7 +28,7 @@ class Table(object):
         return {
             'caption': self.caption,
             'header': self.header,
-            'data': self.rows
+            'preprocess': self.rows
         }
 
     @classmethod

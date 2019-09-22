@@ -15,8 +15,8 @@ from tqdm import tqdm
 import spacy
 from spacy.lang.en import English
 
-from data.data_utils import split_token_coarse, RE_HTML_TAG
-from data.table import *
+from preprocess.data_utils import split_token_coarse, RE_HTML_TAG
+from preprocess.table import *
 
 
 __DEBUG__ = False
@@ -407,7 +407,7 @@ def process():
 
 def debug():
     example_dict = """
-    {"relation":[["","Annual/Final Progress Report Format","Quarterly Progress Report Format","Electronic Report Submission","FY13/14 Quad Chart","Technical Reporting Requirements"],["Word","","","n/a","","n/a"],["PDF","n/a","n/a","n/a","n/a","n/a"]],"pageTitle":"eBRAP Online Application Submission","title":"","url":"https://ebrap.org/eBRAP/public/ProgramFY.htm?programFYId\\u003d12902","hasHeader":true,"headerPosition":"FIRST_ROW","tableType":"RELATION","tableNum":3,"s3Link":"common-crawl/crawl-data/CC-MAIN-2015-32/segments/1438042988061.16/warc/CC-MAIN-20150728002308-00026-ip-10-236-191-2.ec2.internal.warc.gz","recordEndOffset":852028500,"recordOffset":852020298,"tableOrientation":"HORIZONTAL","textBeforeTable":"\xc2\xa0 FY14 General Application Instructions \xc2\xa0 Synopsis of PCRP Award Mechanisms Prostate Cancer Research Program (PCRP) Funding Opportunities and Forms Funding Opportunities \\u0026 Forms Register Login Electronic Biomedical Research Application Portal Serving USAMRMC, USAMRAA, CDMRP, DHP \xc2\xa0 Privacy Statement FAQ Guide Help Desk Home","textAfterTable":"n/a FY15 IND/IDE Documentation Form n/a Pre-application Budget Summary Form n/a Collaborating DoD Military Facility Budget Form n/a Common Blinding Mistakes and How to Avoid Them SOW (Statement of Work) Generic Format n/a SOW for Basic Research (Training Section optional) n/a SOW for Clinical Research (Including Trials, Special Populations) n/a SOW for Advanced Tech Development Research n/a SOW for Collaborative PI projects n/a Regulatory Document Forms \xc2\xa0 Word PDF Safety \\u0026 Environmental Resources n/a n/a Environmental Compliance Assurance Animal","hasKeyColumn":true,"keyColumnIndex":0,"headerRowIndex":0}
+    {"relation":[["","Annual/Final Progress Report Format","Quarterly Progress Report Format","Electronic Report Submission","FY13/14 Quad Chart","Technical Reporting Requirements"],["Word","","","n/a","","n/a"],["PDF","n/a","n/a","n/a","n/a","n/a"]],"pageTitle":"eBRAP Online Application Submission","title":"","url":"https://ebrap.org/eBRAP/public/ProgramFY.htm?programFYId\\u003d12902","hasHeader":true,"headerPosition":"FIRST_ROW","tableType":"RELATION","tableNum":3,"s3Link":"common-crawl/crawl-preprocess/CC-MAIN-2015-32/segments/1438042988061.16/warc/CC-MAIN-20150728002308-00026-ip-10-236-191-2.ec2.internal.warc.gz","recordEndOffset":852028500,"recordOffset":852020298,"tableOrientation":"HORIZONTAL","textBeforeTable":"\xc2\xa0 FY14 General Application Instructions \xc2\xa0 Synopsis of PCRP Award Mechanisms Prostate Cancer Research Program (PCRP) Funding Opportunities and Forms Funding Opportunities \\u0026 Forms Register Login Electronic Biomedical Research Application Portal Serving USAMRMC, USAMRAA, CDMRP, DHP \xc2\xa0 Privacy Statement FAQ Guide Help Desk Home","textAfterTable":"n/a FY15 IND/IDE Documentation Form n/a Pre-application Budget Summary Form n/a Collaborating DoD Military Facility Budget Form n/a Common Blinding Mistakes and How to Avoid Them SOW (Statement of Work) Generic Format n/a SOW for Basic Research (Training Section optional) n/a SOW for Clinical Research (Including Trials, Special Populations) n/a SOW for Advanced Tech Development Research n/a SOW for Collaborative PI projects n/a Regulatory Document Forms \xc2\xa0 Word PDF Safety \\u0026 Environmental Resources n/a n/a Environmental Compliance Assurance Animal","hasKeyColumn":true,"keyColumnIndex":0,"headerRowIndex":0}
     """
 
     worker = CommonCrawlTableExtractor(None, None, daemon=True)

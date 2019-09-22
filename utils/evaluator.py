@@ -35,14 +35,14 @@ class Evaluator(object):
 
             with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
                 for step, batch in enumerate(data_loader):
-                    batch = tuple(t.to(self.device) for t in batch)
-                    input_ids, input_mask, segment_ids, lm_label_ids = batch
-                    # (batch_size, max_seq_len, vocab_size)
-                    predictions = model(input_ids, segment_ids, input_mask)
+                    batch = {k: v.to(self.device) for k, v in batch.items()}
 
-                    loss_sum = loss_fct(predictions.view(-1, predictions.size(-1)), lm_label_ids.view(-1))
+                    # (batch_size, max_seq_len, vocab_size)
+                    predictions = model(batch['input_ids'], batch['token_type_ids'], batch['attention_mask'])
+
+                    loss_sum = loss_fct(predictions.view(-1, predictions.size(-1)), batch['masked_lm_labels'].view(-1))
                     cum_loss += loss_sum.item()
-                    num_slots += (lm_label_ids != -1).sum().item()
+                    num_slots += (batch['masked_lm_labels'] != -1).sum().item()
 
                     pbar.update(1)
 

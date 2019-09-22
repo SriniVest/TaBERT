@@ -1,30 +1,24 @@
 import re
-import shutil
 import sys
 
 import torch
-import logging
 import random
 
 import torch.nn as nn
-import torch.distributed as dist
 from fairseq.data import GroupedIterator
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from pytorch_pretrained_bert.modeling import BertForMaskedLM, BertConfig
-from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
-
 import json
 import numpy as np
-from functools import partial
 
-from model.comm import init_distributed_mode
-from model.dataset import TableDataset
-from model.evaluator import Evaluator
-from model.trainer import Trainer
-from model.util import parse_arg, init_logger
+from model.vanilla_table_bert import VanillaTableBert
+from utils.comm import init_distributed_mode
+from utils.config import TableBertConfig
+from utils.dataset import TableDataset
+from utils.evaluator import Evaluator
+from utils.trainer import Trainer
+from utils.util import parse_arg, init_logger
 
 
 def main():
@@ -35,14 +29,18 @@ def main():
 
     train_data_dir = args.data_dir / 'train'
     dev_data_dir = args.data_dir / 'dev'
+    table_bert_config = TableBertConfig.from_file(
+        args.data_dir / 'config.json', base_model_name=args.base_model_name)
 
     if args.is_master:
         args.output_dir.mkdir(exist_ok=True, parents=True)
-        with (args.output_dir / 'config.json').open('w') as f:
+        with (args.output_dir / 'train_config.json').open('w') as f:
             json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
 
         # copy the table bert config file to the working directory
-        shutil.copy(args.data_dir / 'config.json', args.output_dir / 'tb_config.json')
+        # shutil.copy(args.data_dir / 'config.json', args.output_dir / 'tb_config.json')
+        # save table BERT config
+        table_bert_config.save(args.data_dir / 'tb_config.json')
 
     assert args.data_dir.is_dir(), \
         "--data_dir should point to the folder of files made by pregenerate_training_data.py!"
@@ -79,14 +77,11 @@ def main():
         logger.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-
     # Prepare model
     if args.no_init:
-        assert args.config_file is not None
-        model = BertForMaskedLM(BertConfig.from_json_file(args.config_file))
+        raise NotImplementedError
     else:
-        model = BertForMaskedLM.from_pretrained(args.bert_model)
+        model = VanillaTableBert(table_bert_config)
 
     if args.fp16:
         model = model.half()
@@ -103,6 +98,10 @@ def main():
             import apex
             model = apex.parallel.DistributedDataParallel(model, delay_allreduce=True)
 
+        model_ptr = model.module
+    else:
+        model_ptr = model
+
     trainer = Trainer(model, args)
 
     logger.info("***** Running training *****")
@@ -111,14 +110,13 @@ def main():
     model.train()
 
     # we also partitation the dev set for every local process
-    dev_set = TableDataset(epoch=0, training_path=dev_data_dir, tokenizer=tokenizer,
-                           reduce_memory=args.reduce_memory, multi_gpu=args.multi_gpu)
+    dev_set = TableDataset(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
+                           multi_gpu=args.multi_gpu)
 
     evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
 
     for epoch in range(max_epoch + 1):  # inclusive
-        epoch_dataset = TableDataset(epoch=epoch, training_path=train_data_dir, tokenizer=tokenizer,
-                                     reduce_memory=args.reduce_memory,
+        epoch_dataset = TableDataset(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
                                      multi_gpu=args.multi_gpu)
 
         train_sampler = RandomSampler(epoch_dataset)
@@ -142,7 +140,7 @@ def main():
             if args.is_master:
                 # Save a trained model
                 logger.info("** ** * Saving fine-tuned model ** ** * ")
-                model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
+                model_to_save = model_ptr  # Only save the model it-self
                 output_model_file = args.output_dir / f"pytorch_model_epoch{epoch:02d}.bin"
                 torch.save(model_to_save.state_dict(), str(output_model_file))
 

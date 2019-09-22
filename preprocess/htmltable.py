@@ -10,8 +10,8 @@ from codecs import open
 from collections import defaultdict
 from bs4 import BeautifulSoup as BeautifulSoupOriginal
 
-from data import data_utils
-from data.data_utils import clean_cell_value
+from preprocess import data_utils
+from preprocess.data_utils import clean_cell_value
 
 
 def BeautifulSoup(markup=""):
@@ -369,7 +369,7 @@ class HtmlTable(object):
         else:
             self.rows = []
 
-        # delete inconsistent data fields
+        # delete inconsistent preprocess fields
         del self.cells
         del self.cols
 
@@ -377,7 +377,7 @@ class HtmlTable(object):
         return {
             'caption': self.caption,
             'header': self.header,
-            'data': self.rows
+            'preprocess': self.rows
         }
 
     def annotate_schema(self, nlp_model=None):

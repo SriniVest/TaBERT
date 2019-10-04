@@ -1,14 +1,14 @@
-from typing import Dict, List, Any
+from typing import List, Any
 import numpy as np
 
 import torch
 from pytorch_pretrained_bert import BertForPreTraining
 from torch_scatter import scatter_max, scatter_mean
 
-from model.table_bert import TableBertModel
-from utils.config import TableBertConfig
-from utils.dataset import Example, Table
-from model.input_formatter import VanillaTableBertInputFormatter
+from table_bert.table_bert import TableBertModel
+from table_bert.config import TableBertConfig
+from table_bert.table import Table
+from table_bert.input_formatter import VanillaTableBertInputFormatter
 
 
 class VanillaTableBert(TableBertModel):
@@ -121,26 +121,18 @@ class VanillaTableBert(TableBertModel):
 
         return column_encoding
 
-    def convert_context_and_table_to_bert_input(
+    def to_tensor_dict(
         self,
-        context: List[str],
-        table: Table
-    ) -> Dict:
-        pseudo_row = {column.name: column.sample_value_tokens for column in table.header}
-        instance = self.convert_row_to_bert_input(context, pseudo_row, table.header)
-
-        return instance
-
-    # noinspection PyUnboundLocalVariable
-    def to_tensor_dict(self,
-        examples: List[Example], table_specific_tensors=True
+        contexts: List[List[str]],
+        tables: List[Table],
+        table_specific_tensors=True
     ):
         instances = []
-        for e_id, example in enumerate(examples):
-            instance = self.convert_example_to_bert_input(example)
+        for e_id, (context, table) in enumerate(zip(contexts, tables)):
+            instance = self.input_formatter.get_input(context, table)
             instances.append(instance)
 
-        batch_size = len(examples)
+        batch_size = len(contexts)
         max_sequence_len = max(len(x['tokens']) for x in instances)
 
         # basic tensors
@@ -181,7 +173,7 @@ class VanillaTableBert(TableBertModel):
                 context_token_indices[i, :instance['context_length']] = instance['context_token_indices']
                 context_mask[i, :instance['context_length']] = 1.
 
-                header = examples[i].table.header
+                header = tables[i].header
                 for col_id, column in enumerate(header):
                     if column.name in instance['column_spans']:
                         col_start, col_end = instance['column_spans'][column.name][column_span]
@@ -210,8 +202,8 @@ class VanillaTableBert(TableBertModel):
 
         return tensor_dict, instances
 
-    def encode(self, examples: List[Example]):
-        tensor_dict, instances = self.to_tensor_dict(examples)
+    def encode(self, contexts: List[List[str]], tables: List[Table]):
+        tensor_dict, instances = self.to_tensor_dict(contexts, tables)
         device = next(self.parameters()).device
 
         for key in tensor_dict.keys():

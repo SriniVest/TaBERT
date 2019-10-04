@@ -23,11 +23,11 @@ def parse_arg():
     parser.add_argument('--output_dir', type=Path, required=True)
 
     parser.add_argument("--base_model_name", type=str, required=False,
-                        help="Bert pre-trained model selected in the list: bert-base-uncased, "
+                        help="Bert pre-trained table_bert selected in the list: bert-base-uncased, "
                              "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
                         default='bert-base-uncased')
     parser.add_argument('--no_init', action='store_true', default=False)
-    parser.add_argument('--config_file', type=Path, help='model config file if do not use pre-trained BERT model.')
+    parser.add_argument('--config_file', type=Path, help='table_bert config file if do not use pre-trained BERT table_bert.')
 
     # distributed training
     parser.add_argument("--ddp_backend", type=str, default='pytorch', choices=['pytorch', 'apex'])

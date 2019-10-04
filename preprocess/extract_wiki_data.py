@@ -59,7 +59,7 @@ class TableExtractor(multiprocessing.Process):
         print('finished loading Java class')
 
         self.nlp = spacy.load('en_core_web_sm')
-        print('loaded NLP model')
+        print('loaded NLP table_bert')
 
         job = self.job_queue.get()
         while job is not None:

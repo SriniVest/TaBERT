@@ -5,7 +5,7 @@ import torch
 from pytorch_pretrained_bert import BertForPreTraining, BertForMaskedLM, BertTokenizer
 from torch import nn as nn
 
-from utils.config import TableBertConfig
+from table_bert.config import TableBertConfig
 
 
 MAX_BERT_INPUT_LENGTH = 512
@@ -62,7 +62,7 @@ class TableBertModel(nn.Module):
 
         config = TableBertConfig.from_file(config_file, **override_config)
 
-        # old model format
+        # old table_bert format
         if '_bert_model' not in state_dict:
             bert_model = BertForMaskedLM.from_pretrained(
                 config.base_model_name,

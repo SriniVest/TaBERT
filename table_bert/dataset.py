@@ -3,12 +3,10 @@ import ujson
 import logging
 import math
 import multiprocessing
-import subprocess
 import sys
 import time
-from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Optional, Iterator, Set, List
+from typing import Dict, Optional, Iterator, Set
 import redis
 
 import numpy as np
@@ -19,6 +17,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
 from tqdm import tqdm
+from table_bert.table import Column
 
 
 class DistributedSampler(Sampler):
@@ -196,50 +195,6 @@ class TableDataset(Dataset):
             'token_type_ids': torch.tensor(segment_array.astype(np.int64)),
             'masked_lm_labels': torch.tensor(lm_label_array.astype(np.int64))
         }
-
-
-class Column(object):
-    def __init__(self, name, type, sample_value=None, **kwargs):
-        self.name = name
-        self.type = type
-        self.sample_value = sample_value
-
-        self.fields = []
-        for key, val in kwargs.items():
-            self.fields.append(key)
-            setattr(self, key, val)
-
-    def to_dict(self):
-        data = {
-            'name': self.name,
-            'type': self.type,
-            'sample_value': self.sample_value,
-        }
-
-        for key in self.fields:
-            data[key] = getattr(self, key)
-
-        return data
-
-
-class Table(object):
-    def __init__(self, id, header, data=None, **kwargs):
-        self.id = id
-        self.header = header
-        self.data: List[Dict] = data
-        self.fields = []
-
-        for key, val in kwargs.items():
-            self.fields.append(key)
-            setattr(self, key, val)
-
-    def with_rows(self, rows):
-        extra_fields = {f: getattr(self, f) for f in self.fields}
-
-        return Table(self.id, self.header, data=rows, **extra_fields)
-
-    def __len__(self):
-        return len(self.data)
 
 
 class Example(object):

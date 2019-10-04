@@ -20,9 +20,9 @@ from random import shuffle, choice, sample, random
 
 from pytorch_pretrained_bert import *
 
-from model.input_formatter import VanillaTableBertInputFormatter
-from utils.config import TableBertConfig
-from utils.dataset import Example, TableDatabase
+from table_bert.input_formatter import VanillaTableBertInputFormatter
+from table_bert.config import TableBertConfig
+from table_bert.dataset import Example, TableDatabase
 
 TRAIN_INSTANCE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15566'
 EXAMPLE_QUEUE_ADDRESS = 'tcp://127.0.0.1:15567'

@@ -4,9 +4,10 @@ from typing import List, Callable
 
 from pytorch_pretrained_bert import BertTokenizer
 
-from model.table_bert import MAX_BERT_INPUT_LENGTH
-from utils.config import TableBertConfig
-from utils.dataset import Column, Table, Example
+from table_bert.table_bert import MAX_BERT_INPUT_LENGTH
+from table_bert.config import TableBertConfig
+from table_bert.dataset import Example
+from table_bert.table import Column, Table
 
 
 class TableBertBertInputFormatter(object):

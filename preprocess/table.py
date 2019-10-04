@@ -1,7 +1,7 @@
 from typing import List
 
 from preprocess import data_utils
-from utils.dataset import Column
+from table_bert.table import Column
 
 TABLE_MIN_ROW_NUM = 3
 TABLE_MIN_COL_NUM = 2

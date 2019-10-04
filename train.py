@@ -12,10 +12,10 @@ from tqdm import tqdm
 import json
 import numpy as np
 
-from model.vanilla_table_bert import VanillaTableBert
+from table_bert.vanilla_table_bert import VanillaTableBert
 from utils.comm import init_distributed_mode
-from utils.config import TableBertConfig
-from utils.dataset import TableDataset
+from table_bert.config import TableBertConfig
+from table_bert.dataset import TableDataset
 from utils.evaluator import Evaluator
 from utils.trainer import Trainer
 from utils.util import parse_arg, init_logger
@@ -77,7 +77,7 @@ def main():
         logger.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prepare model
+    # Prepare table_bert
     if args.no_init:
         raise NotImplementedError
     else:
@@ -138,9 +138,9 @@ def main():
             logger.info(f'Epoch {epoch} finished.')
 
             if args.is_master:
-                # Save a trained model
-                logger.info("** ** * Saving fine-tuned model ** ** * ")
-                model_to_save = model_ptr  # Only save the model it-self
+                # Save a trained table_bert
+                logger.info("** ** * Saving fine-tuned table_bert ** ** * ")
+                model_to_save = model_ptr  # Only save the table_bert it-self
                 output_model_file = args.output_dir / f"pytorch_model_epoch{epoch:02d}.bin"
                 torch.save(model_to_save.state_dict(), str(output_model_file))
 

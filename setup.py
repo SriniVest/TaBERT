@@ -20,5 +20,5 @@ setup(
     #   py_modules=["my_module"],
     #
     packages=find_packages(exclude=['exp_runs', 'scripts', 'preprocess', 'utils']), # find_packages(exclude=['contrib', 'docs', 'tests']),  # Required
-    python_requires='>=3.5'
+    python_requires='>=3.6'
 )

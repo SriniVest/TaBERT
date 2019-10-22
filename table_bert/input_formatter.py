@@ -76,6 +76,7 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
                 truncated_value_tokens,
                 token_offset=column_start_idx
             )
+            column_input_tokens.append(self.config.column_delimiter)
 
             if len(row_input_tokens) + len(column_input_tokens) > max_table_token_length:
                 break

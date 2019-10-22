@@ -13,7 +13,7 @@ class TableBertConfig(SimpleNamespace):
         base_model_name: str = 'bert-base-uncased',
         column_delimiter: str = '[SEP]',
         context_first: bool = True,
-        cell_input_template: bool = 'column|value|cell',
+        cell_input_template: str = 'column (value) (type)',
         column_representation: str = 'mean_pool',
         max_cell_len: int = 5,
         max_sequence_len: int = 512,

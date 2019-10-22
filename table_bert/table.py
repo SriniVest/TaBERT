@@ -29,6 +29,7 @@ class Table(object):
     def __init__(self, id, header, data=None, **kwargs):
         self.id = id
         self.header = header
+        self.header_index = {column.name: column for column in header}
         self.data: List[Dict] = data
         self.fields = []
 
@@ -40,6 +41,9 @@ class Table(object):
         extra_fields = {f: getattr(self, f) for f in self.fields}
 
         return Table(self.id, self.header, data=rows, **extra_fields)
+
+    def get_column(self, column_name):
+        return self.header_index[column_name]
 
     def __len__(self):
         return len(self.data)

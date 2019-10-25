@@ -70,6 +70,9 @@ def parse_arg():
     parser.add_argument('--fp16',
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
+    parser.add_argument('--memory_efficient_fp16',
+                        action='store_true',
+                        help='Use memory efficient fp16')
     parser.add_argument('--loss_scale',
                         type=float, default=0,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"

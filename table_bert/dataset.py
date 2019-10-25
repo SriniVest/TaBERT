@@ -1,5 +1,6 @@
 import json
 import ujson
+import msgpack
 import logging
 import math
 import multiprocessing
@@ -309,27 +310,51 @@ class TableDatabase:
     def __load_process_zmq(file, num_workers):
         context = zmq.Context()
         job_sender = context.socket(zmq.PUSH)
-        job_sender.setsockopt(zmq.LINGER, -1)
+        # job_sender.setsockopt(zmq.LINGER, -1)
         job_sender.bind("tcp://127.0.0.1:5557")
+
+        controller = context.socket(zmq.PUB)
+        controller.bind('tcp://127.0.0.1:5558')
+
+        # wait for sometime to let all workers to connect
+        time.sleep(5)
 
         cnt = 0
         with file.open() as f:
             for line in f:
+                cnt += 1
                 job_sender.send_string(line)
                 # if cnt % 10000 == 0:
                 #     print(f'read {cnt} examples')
                 #     sys.stdout.flush()
 
-        while True:
-            job_sender.send_string('')
-            time.sleep(0.1)
+        controller.send_string('kill')
+        # print('Reader count:', cnt)
+
+        job_sender.close()
+        controller.close()
+        context.destroy()
+        # while True:
+        #     job_sender.send_string('')
+        #     time.sleep(0.1)
+
+        # while True:
+        #     time.sleep(1)
 
     @staticmethod
     def __example_worker_process_zmq(tokenizer, db):
         context = zmq.Context()
         job_receiver = context.socket(zmq.PULL)
-        job_receiver.setsockopt(zmq.LINGER, -1)
+        # job_receiver.setsockopt(zmq.LINGER, -1)
         job_receiver.connect("tcp://127.0.0.1:5557")
+
+        controller = context.socket(zmq.SUB)
+        controller.connect("tcp://127.0.0.1:5558")
+        controller.setsockopt(zmq.SUBSCRIBE, b"")
+
+        poller = zmq.Poller()
+        poller.register(job_receiver, zmq.POLLIN)
+        poller.register(controller, zmq.POLLIN)
 
         cache_client = redis.Redis(host='localhost', port=6379, db=0)
         buffer_size = 20000
@@ -346,30 +371,55 @@ class TableDatabase:
 
         cnt = 0
         buffer = []
+        can_exit = False
         while True:
-            job = job_receiver.recv_string()
-            if job:
-                cnt += 1
-                example = Example.from_dict(ujson.loads(job), tokenizer, suffix=None)
+            triggered = False
+            socks = dict(poller.poll(timeout=2000))
 
-                # TODO: move this to preprocess pre-processing
-                if any(len(col.name.split(' ')) > 10 for col in example.header):
-                    continue
+            if socks.get(job_receiver) == zmq.POLLIN:
+                triggered = True
+                job = job_receiver.recv_string()
+                if job:
+                    cnt += 1
+                    # print(cnt)
+                    example = Example.from_dict(ujson.loads(job), tokenizer, suffix=None)
 
-                if any(len(col.name_tokens) == 0 for col in example.header):
-                    continue
+                    # TODO: move this to preprocess pre-processing
+                    if any(len(col.name.split(' ')) > 10 for col in example.header):
+                        continue
 
-                data = example.serialize()
-                buffer.append(ujson.dumps(data))
+                    if any(len(col.name_tokens) == 0 for col in example.header):
+                        continue
 
-                if len(buffer) >= buffer_size:
-                    _add_to_cache()
-            else:
-                job_receiver.close()
-                _add_to_cache()
+                    data = example.serialize()
+                    buffer.append(msgpack.packb(data, use_bin_type=True))
+
+                    if len(buffer) >= buffer_size:
+                        _add_to_cache()
+
+            # else:
+            #     job_receiver.close()
+            #     _add_to_cache()
+            #     break
+
+            if socks.get(controller) == zmq.POLLIN:
+                triggered = True
+                print(controller.recv_string())
+                can_exit = True
+
+            # timeout
+            # print(socks)
+            if not socks and can_exit:
+                print('Processor exit...')
                 break
 
-            cnt += 1
+            if socks and not triggered:
+                print(socks)
+
+        _add_to_cache()
+        job_receiver.close()
+        controller.close()
+        context.destroy()
 
     @classmethod
     def from_jsonl(cls, file_path: Path, tokenizer: Optional[BertTokenizer] = None) -> 'TableDatabase':
@@ -388,6 +438,9 @@ class TableDatabase:
             worker.start()
             workers.append(worker)
 
+        while any(not worker.is_alive() for worker in workers):
+            time.sleep(0.1)
+
         reader.start()
 
         stop_count = 0
@@ -403,7 +456,7 @@ class TableDatabase:
                     print(f'all workers stoped!')
                     break
 
-                time.sleep(5)
+                time.sleep(1)
 
         for worker in workers:
             worker.join()
@@ -419,7 +472,7 @@ class TableDatabase:
         if result is None:
             raise IndexError(item)
 
-        example = Example.from_serialized(json.loads(result))
+        example = Example.from_serialized(msgpack.unpackb(result, raw=False))
 
         return example
 

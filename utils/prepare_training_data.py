@@ -155,7 +155,7 @@ def generate_train_instance_from_example(
             instances = bert_input_formatter.get_pretraining_instances_from_example(example, sample_context)
 
             for instance in instances:
-                if debug_file:
+                if debug_file and random() <= 0.01:
                     f_dbg.write(json.dumps(instance) + os.linesep)
 
                 del instance['tokens']
@@ -296,7 +296,7 @@ def generate_for_epoch(table_db: TableDatabase,
         worker_process = multiprocessing.Process(
             target=generate_train_instance_from_example,
             args=(table_db, indices_chunk, worker_status_queue, input_formatter,
-                  epoch_file.with_suffix('.sample.json') if debug and i == 0 else None),
+                  epoch_file.with_suffix('.sample.json') if debug and i == 0 and 'epoch_0' in str(epoch_file) else None),
             daemon=True
         )
         worker_process.start()

@@ -57,7 +57,7 @@ class TableBertConfig(SimpleNamespace):
         parser.set_defaults(context_first=True)
 
         parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
-        parser.add_argument("--cell_input_template", type=str, default='column|value|type', help='Cell representation')
+        parser.add_argument("--cell_input_template", type=str, default='column|type|value', help='Cell representation')
         parser.add_argument("--column_representation", type=str, default='mean_pool', help='Column representation')
 
         # training specifications
@@ -69,7 +69,7 @@ class TableBertConfig(SimpleNamespace):
                             help="Probability of masking each token for the LM task")
         parser.add_argument("--masked_column_prob", type=float, default=0.20,
                             help="Probability of masking each token for the LM task")
-        parser.add_argument("--max_predictions_per_seq", type=int, default=100,
+        parser.add_argument("--max_predictions_per_seq", type=int, default=200,
                             help="Maximum number of tokens to mask in each sequence")
 
         parser.add_argument('--context_sample_strategy', type=str, default='nearest',

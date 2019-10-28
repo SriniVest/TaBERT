@@ -155,7 +155,7 @@ def generate_train_instance_from_example(
             instances = bert_input_formatter.get_pretraining_instances_from_example(example, sample_context)
 
             for instance in instances:
-                if debug_file and random() <= 0.01:
+                if debug_file and random() <= 0.05:
                     f_dbg.write(json.dumps(instance) + os.linesep)
 
                 del instance['tokens']
@@ -354,7 +354,7 @@ def main():
         # generate train and dev split
         example_indices = list(range(len(table_db)))
         shuffle(example_indices)
-        dev_size = min(int(len(table_db) * 0.1), 500000)
+        dev_size = min(int(len(table_db) * 0.1), 100000)
         train_indices = example_indices[:-dev_size]
         dev_indices = example_indices[-dev_size:]
 

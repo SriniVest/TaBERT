@@ -247,7 +247,7 @@ class Example(object):
             header.append(column)
 
         if source == 'wiki':
-            for row in entry['preprocess'][1:]:
+            for row in entry['data'][1:]:
                 for col_id, (tag, cell_val) in enumerate(row):
                     if col_id >= len(column_data):
                         column_data.append([])

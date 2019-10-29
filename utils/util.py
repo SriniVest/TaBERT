@@ -19,25 +19,25 @@ def parse_arg():
                         action='store_true',
                         help="Whether not to use CUDA when available")
 
-    parser.add_argument('--data_dir', type=Path, required=True)
-    parser.add_argument('--output_dir', type=Path, required=True)
+    parser.add_argument('--data-dir', type=Path, required=True)
+    parser.add_argument('--output-dir', type=Path, required=True)
 
-    parser.add_argument("--base_model_name", type=str, required=False,
+    parser.add_argument("--base-model-name", type=str, required=False,
                         help="Bert pre-trained table_bert selected in the list: bert-base-uncased, "
                              "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
                         default='bert-base-uncased')
-    parser.add_argument('--no_init', action='store_true', default=False)
-    parser.add_argument('--config_file', type=Path, help='table_bert config file if do not use pre-trained BERT table_bert.')
+    parser.add_argument('--no-init', action='store_true', default=False)
+    # parser.add_argument('--config-file', type=Path, help='table_bert config file if do not use pre-trained BERT table_bert.')
 
     # distributed training
-    parser.add_argument("--ddp_backend", type=str, default='pytorch', choices=['pytorch', 'apex'])
-    parser.add_argument("--local_rank",
+    parser.add_argument("--ddp-backend", type=str, default='pytorch', choices=['pytorch', 'apex'])
+    parser.add_argument("--local-rank",
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")
-    parser.add_argument("--master_port", type=int, default=-1,
+    parser.add_argument("--master-port", type=int, default=-1,
                         help="Master port (for multi-node SLURM jobs)")
-    parser.add_argument("--debug_slurm", action='store_true',
+    parser.add_argument("--debug-slurm", action='store_true',
                         help="Debug multi-GPU / multi-node within a SLURM job")
 
     # training details

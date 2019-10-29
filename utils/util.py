@@ -41,27 +41,22 @@ def parse_arg():
                         help="Debug multi-GPU / multi-node within a SLURM job")
 
     # training details
-    parser.add_argument("--train_batch_size",
+    parser.add_argument("--train-batch-size",
                         default=32,
                         type=int,
                         help="Total batch size for training.")
-    parser.add_argument("--num_train_steps", type=int, default=100000, help="Number of steps to train for")
-    parser.add_argument('--gradient_accumulation_steps',
+    # parser.add_argument("--total-num-update", type=int, default=1000000, help="Number of steps to train for")
+    parser.add_argument('--gradient-accumulation-steps',
                         type=int,
                         default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument("--lr_scheduler", type=str, default='polynomial_decay', help='Learning rate scheduler')
+    parser.add_argument("--lr-scheduler", type=str, default='polynomial_decay', help='Learning rate scheduler')
     parser.add_argument("--optimizer", type=str, default='adam', help='Optimizer to use')
-    parser.add_argument("--warmup_proportion",
-                        default=0.1,
-                        type=float,
-                        help="Proportion of training to perform linear learning rate warmup for. "
-                             "E.g., 0.1 = 10%% of training.")
-    parser.add_argument('--lr', '--learning_rate', default='0.00005', type=eval_str_list,
+    parser.add_argument('--lr', '--learning-rate', default='0.00005', type=eval_str_list,
                         metavar='LR_1,LR_2,...,LR_N',
                         help='learning rate for the first N epochs; all epochs >N using LR_N'
                              ' (note: this may be interpreted differently depending on --lr-scheduler)')
-    parser.add_argument('--clip_norm', default=0., type=float, help='clip gradient')
+    parser.add_argument('--clip-norm', default=0., type=float, help='clip gradient')
 
     FairseqAdam.add_args(parser)
     PolynomialDecaySchedule.add_args(parser)
@@ -70,13 +65,13 @@ def parse_arg():
     parser.add_argument('--fp16',
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--memory_efficient_fp16',
+    parser.add_argument('--memory-efficient-fp16',
                         action='store_true',
                         help='Use memory efficient fp16')
-    parser.add_argument('--threshold_loss_scale', type=float, default=None)
-    parser.add_argument('--fp16_init_scale', type=float, default=128)
-    parser.add_argument('--fp16_scale_window', type=int, default=0)
-    parser.add_argument('--fp16_scale_tolerance', type=float, default=0.0)
+    parser.add_argument('--threshold-loss-scale', type=float, default=None)
+    parser.add_argument('--fp16-init-scale', type=float, default=128)
+    parser.add_argument('--fp16-scale-window', type=int, default=0)
+    parser.add_argument('--fp16-scale-tolerance', type=float, default=0.0)
 
     args = parser.parse_args()
 

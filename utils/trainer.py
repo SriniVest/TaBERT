@@ -1,7 +1,9 @@
 import contextlib
+import sys
 from argparse import Namespace
 from itertools import chain
 from typing import Dict
+import logging
 
 import torch
 import torch.nn as nn
@@ -16,6 +18,7 @@ class Trainer(object):
         self.args = args
         self._num_updates = 0
         self.cuda = not self.args.cpu and torch.cuda.is_available()
+        self.logger = logging.getLogger()
 
         if args.fp16:
             self.model = self.model.half()
@@ -110,3 +113,6 @@ class Trainer(object):
     def take_one_step(self):
         self._num_updates += 1
         self.lr_scheduler.step_update(self._num_updates)
+        if self._num_updates >= self.lr_scheduler.total_num_update:
+            logging.warning('Reached max num of updates')
+            # exit(0)

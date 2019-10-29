@@ -43,9 +43,10 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
                 input.extend(cell_value)
             elif token == 'type':
                 span_map['type'] = (start_token_abs_position,
-                                    start_token_abs_position + len(cell_value))
+                                    start_token_abs_position + 1)
                 input.append(column.type)
             else:
+                span_map.setdefault('other_tokens', []).append(start_token_abs_position)
                 input.append(token)
 
         span_map['whole_span'] = (token_offset, token_offset + len(input))
@@ -95,7 +96,7 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         else:
             sequence = ['[CLS]'] + row_input_tokens + ['[SEP]'] + context + ['[SEP]']
             segment_ids = [0] * (len(row_input_tokens) + 2) + [1] * (len(context) + 1)
-            context_token_indices = list(range(len(row_input_tokens) + 2, len(row_input_tokens) + 2 + 1 + len(context)))
+            context_token_indices = list(range(len(row_input_tokens) + 1, len(row_input_tokens) + 1 + 1 + len(context) + 1))
 
         instance = {
             'tokens': sequence,
@@ -142,7 +143,15 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         column_spans = input_instance['column_spans']
 
         column_candidate_indices = [
-            list(range(*span['column_name']))
+            (
+                    list(range(*span['column_name'])) +
+                    list(range(*span['type'])) +
+                    (
+                        span['other_tokens']
+                        if random() < 0.01
+                        else []
+                    )
+            )
             for col_name, span
             in column_spans.items()
         ]

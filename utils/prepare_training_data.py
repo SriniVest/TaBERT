@@ -8,6 +8,7 @@ from typing import List, Iterator
 import numpy as np
 import json
 import ujson
+import msgpack
 
 import gc
 import torch
@@ -134,7 +135,7 @@ def generate_train_instance_from_example(
     table_db: TableDatabase,
     indices: List[int],
     status_queue: multiprocessing.Queue,
-    args: Namespace,
+    bert_input_formatter: VanillaTableBertInputFormatter,
     debug_file: Path = None
 ):
     context = zmq.Context()
@@ -147,26 +148,23 @@ def generate_train_instance_from_example(
     if debug_file:
         f_dbg = open(debug_file, 'w')
 
-    table_bert_config = TableBertConfig.from_dict(vars(args))
-    bert_input_formatter = VanillaTableBertInputFormatter(table_bert_config)
-
-    # print('started queues')
     num_processed = 0
     for idx in indices:
         example = table_db[idx]
-        # print('get one example')
         try:
             instances = bert_input_formatter.get_pretraining_instances_from_example(example, sample_context)
 
             for instance in instances:
-                if debug_file:
+                if debug_file and random() <= 0.05:
                     f_dbg.write(json.dumps(instance) + os.linesep)
 
                 del instance['tokens']
                 del instance['masked_lm_labels']
                 del instance['info']
 
-                instance_sender.send_pyobj(ujson.dumps(instance, ensure_ascii=False))
+                # instance_sender.send_pyobj(ujson.dumps(instance, ensure_ascii=False))
+                data = msgpack.packb(instance, use_bin_type=True)
+                instance_sender.send_pyobj(data)
 
             num_processed += 1
             if num_processed == 5000:
@@ -240,7 +238,9 @@ def write_instance_to_file(
     while True:
         data = instance_receiver.recv_pyobj()
         if data is not None:
-            data = ujson.loads(data)
+            data = msgpack.unpackb(data, raw=False)
+            # data = ujson.loads(data)
+             # print('received one')
 
             cur_pos = len(sequences)
             sequence_len = len(data['token_ids'])
@@ -268,6 +268,7 @@ def write_instance_to_file(
 
     stat_send.send((num_instances, shard_id))
     instance_receiver.close()
+    context.destroy()
 
 
 def generate_for_epoch(table_db: TableDatabase,
@@ -283,25 +284,31 @@ def generate_for_epoch(table_db: TableDatabase,
     instance_writer_process = multiprocessing.Process(target=write_instance_to_file,
                                                       args=(epoch_file, num_workers, stat_send),
                                                       daemon=True)
-    instance_writer_process.start()
 
-    debug = False
+    debug = True
 
     workers = []
     worker_status_queue = multiprocessing.Queue()
+    table_bert_config = TableBertConfig.from_dict(vars(args))
+    input_formatter = VanillaTableBertInputFormatter(table_bert_config)
     for i in range(num_workers):
         indices_chunk = indices[i: len(indices): num_workers]
         worker_process = multiprocessing.Process(
             target=generate_train_instance_from_example,
-            args=(table_db, indices_chunk, worker_status_queue, args,
-                  epoch_file.with_suffix('.sample.json') if debug and i == 0 else None),
+            args=(table_db, indices_chunk, worker_status_queue, input_formatter,
+                  epoch_file.with_suffix('.sample.json') if debug and i == 0 and 'epoch_0' in str(epoch_file) else None),
             daemon=True
         )
         worker_process.start()
         workers.append(worker_process)
 
+    while not all(worker.is_alive() for worker in workers):
+        time.sleep(1)
+
+    instance_writer_process.start()
+
     finished_worker_num = 0
-    with tqdm(desc="Document", file=sys.stdout) as pbar:
+    with tqdm(desc="Processing documents", file=sys.stdout) as pbar:
         while True:
             status = worker_status_queue.get()
             if status == 'EXIT':
@@ -347,7 +354,7 @@ def main():
         # generate train and dev split
         example_indices = list(range(len(table_db)))
         shuffle(example_indices)
-        dev_size = min(int(len(table_db) * 0.1), 500000)
+        dev_size = min(int(len(table_db) * 0.1), 100000)
         train_indices = example_indices[:-dev_size]
         dev_indices = example_indices[-dev_size:]
 

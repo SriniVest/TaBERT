@@ -57,7 +57,7 @@ def parse_arg():
                         type=float,
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
-    parser.add_argument('--lr', '--learning_rate', default='0.25', type=eval_str_list,
+    parser.add_argument('--lr', '--learning_rate', default='0.00005', type=eval_str_list,
                         metavar='LR_1,LR_2,...,LR_N',
                         help='learning rate for the first N epochs; all epochs >N using LR_N'
                              ' (note: this may be interpreted differently depending on --lr-scheduler)')
@@ -70,13 +70,13 @@ def parse_arg():
     parser.add_argument('--fp16',
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--loss_scale',
-                        type=float, default=0,
-                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                             "0 (default value): dynamic loss scaling.\n"
-                             "Positive power of 2: static loss scaling value.\n")
+    parser.add_argument('--memory_efficient_fp16',
+                        action='store_true',
+                        help='Use memory efficient fp16')
+    parser.add_argument('--threshold_loss_scale', type=float, default=None)
     parser.add_argument('--fp16_init_scale', type=float, default=128)
-    parser.add_argument('--fp16_scale_window', type=int, default=1000)
+    parser.add_argument('--fp16_scale_window', type=int, default=0)
+    parser.add_argument('--fp16_scale_tolerance', type=float, default=0.0)
 
     args = parser.parse_args()
 

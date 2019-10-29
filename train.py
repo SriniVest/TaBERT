@@ -64,7 +64,7 @@ def main():
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
             args.gradient_accumulation_steps))
 
-    real_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+    real_batch_size = args.train_batch_size  # // args.gradient_accumulation_steps
 
     random.seed(args.seed)
     np.random.seed(args.seed)

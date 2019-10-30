@@ -40,7 +40,9 @@ class TableBertConfig(SimpleNamespace):
         self.do_lower_case = do_lower_case
 
         tokenizer = BertTokenizer.from_pretrained(self.base_model_name)
-        self.cell_input_template = tokenizer.tokenize(cell_input_template)
+        if isinstance(cell_input_template, str):
+            cell_input_template = tokenizer.tokenize(cell_input_template)
+        self.cell_input_template = cell_input_template
 
         self.masked_context_prob = masked_context_prob
         self.masked_column_prob = masked_column_prob

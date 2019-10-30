@@ -40,7 +40,7 @@ def main():
         # copy the table bert config file to the working directory
         # shutil.copy(args.data_dir / 'config.json', args.output_dir / 'tb_config.json')
         # save table BERT config
-        table_bert_config.save(args.data_dir / 'tb_config.json')
+        table_bert_config.save(args.output_dir / 'tb_config.json')
 
     assert args.data_dir.is_dir(), \
         "--data_dir should point to the folder of files made by pregenerate_training_data.py!"

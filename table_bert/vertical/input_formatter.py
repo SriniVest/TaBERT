@@ -189,6 +189,7 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
             'masked_context_token_labels': masked_context_token_labels,
             'masked_context_token_label_ids': self.tokenizer.convert_tokens_to_ids(masked_context_token_labels),
             'masked_column_token_column_ids': masked_column_token_column_ids,
+            'masked_column_token_labels': masked_column_token_labels,
             'masked_column_token_label_ids': self.tokenizer.convert_tokens_to_ids(masked_column_token_labels),
             "info": info
         }

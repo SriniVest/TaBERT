@@ -445,7 +445,7 @@ class TableDatabase:
 
         stop_count = 0
         db_size = 0
-        with tqdm(desc="Loading Dataset", unit=" entries", file=sys.stdout) as pbar:
+        with tqdm(desc=f"Loading Tables from {str(file_path)}", unit=" entries", file=sys.stdout) as pbar:
             while True:
                 cur_db_size = len(db)
                 pbar.update(cur_db_size - db_size)

@@ -236,7 +236,7 @@ def generate_for_epoch(table_db: TableDatabase,
                        input_formatter: TableBertBertInputFormatter,
                        instance_serialization_func: Callable,
                        args: Namespace):
-    print(f'Generating {epoch_file}', file=sys.stderr)
+    # print(f'Generating {epoch_file}', file=sys.stderr)
 
     stat_recv, stat_send = multiprocessing.Pipe()
     num_workers = multiprocessing.cpu_count() - 2
@@ -268,7 +268,7 @@ def generate_for_epoch(table_db: TableDatabase,
     instance_writer_process.start()
 
     finished_worker_num = 0
-    with tqdm(desc="Processing documents", file=sys.stdout) as pbar:
+    with tqdm(desc=f"Generating dataset {epoch_file}", file=sys.stdout) as pbar:
         while True:
             status = worker_status_queue.get()
             if status == 'EXIT':
@@ -330,7 +330,7 @@ def main():
     tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
-        print(f'Num entries in database: {len(table_db)}', file=sys.stderr)
+        print(f'Num tables in total: {len(table_db)}', file=sys.stdout)
 
         # generate train and dev split
         example_indices = list(range(len(table_db)))

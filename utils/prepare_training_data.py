@@ -4,7 +4,7 @@ import time
 import traceback
 from argparse import ArgumentParser, Namespace
 from multiprocessing import connection
-from typing import List, Iterator
+from typing import List, Iterator, Callable
 import numpy as np
 import json
 import ujson
@@ -21,7 +21,7 @@ from random import shuffle, choice, sample, random
 
 from pytorch_pretrained_bert import *
 
-from table_bert.input_formatter import VanillaTableBertInputFormatter
+from table_bert.input_formatter import VanillaTableBertInputFormatter, TableBertBertInputFormatter
 from table_bert.config import TableBertConfig
 from table_bert.dataset import Example, TableDatabase
 
@@ -86,56 +86,11 @@ def sample_context(example: Example, max_context_length: int, context_sample_str
         raise RuntimeError('Unknown context sample strategy')
 
 
-def __create_masked_lm_predictions_deprecated(tokens, context_indices, column_indices,
-                                 masked_context_token_prob, mask_column_token_prob,
-                                 max_predictions_per_seq, vocab_list):
-    """Creates the predictions for the masked LM objective. This is mostly copied from the Google BERT repo, but
-    with several refactors to clean it up and remove a lot of unnecessary variables."""
-
-    # mask `mask_column_token_prob` of tokens in columns
-    # mask `masked_lm_prob` of tokens in NL context
-
-    num_column_tokens_to_mask = min(max_predictions_per_seq,
-                                    max(2, int(round(len(column_indices) * mask_column_token_prob))))
-    max_context_token_to_mask = max_predictions_per_seq - num_column_tokens_to_mask
-    num_context_tokens_to_mask = min(max_context_token_to_mask,
-                                     max(1, int(round(len(context_indices) * masked_context_token_prob))))
-
-    shuffle(column_indices)
-    masked_column_token_indices = sorted(sample(column_indices, num_column_tokens_to_mask))
-
-    if num_context_tokens_to_mask:
-        shuffle(context_indices)
-        masked_context_token_indices = sorted(sample(context_indices, num_context_tokens_to_mask))
-        masked_indices = sorted(masked_context_token_indices + masked_column_token_indices)
-    else:
-        masked_indices = masked_column_token_indices
-
-    masked_token_labels = []
-
-    for index in masked_indices:
-        # 80% of the time, replace with [MASK]
-        if random() < 0.8:
-            masked_token = "[MASK]"
-        else:
-            # 10% of the time, keep original
-            if random() < 0.5:
-                masked_token = tokens[index]
-            # 10% of the time, replace with random word
-            else:
-                masked_token = choice(vocab_list)
-        masked_token_labels.append(tokens[index])
-        # Once we've saved the true label for that token, we can overwrite it with the masked version
-        tokens[index] = masked_token
-
-    return tokens, masked_indices, masked_token_labels
-
-
 def generate_train_instance_from_example(
     table_db: TableDatabase,
     indices: List[int],
     status_queue: multiprocessing.Queue,
-    bert_input_formatter: VanillaTableBertInputFormatter,
+    bert_input_formatter: TableBertBertInputFormatter,
     debug_file: Path = None
 ):
     context = zmq.Context()
@@ -158,9 +113,10 @@ def generate_train_instance_from_example(
                 if debug_file and random() <= 0.05:
                     f_dbg.write(json.dumps(instance) + os.linesep)
 
-                del instance['tokens']
-                del instance['masked_lm_labels']
-                del instance['info']
+                bert_input_formatter.remove_unecessary_instance_entries(instance)
+                # del instance['tokens']
+                # del instance['masked_lm_labels']
+                # del instance['info']
 
                 # instance_sender.send_pyobj(ujson.dumps(instance, ensure_ascii=False))
                 data = msgpack.packb(instance, use_bin_type=True)
@@ -171,6 +127,7 @@ def generate_train_instance_from_example(
                 status_queue.put(('HEART_BEAT', num_processed))
                 num_processed = 0
         except:
+            # raise
             typ, value, tb = sys.exc_info()
             print('*' * 50 + 'Exception' + '*' * 50, file=sys.stderr)
             print(example.serialize(), file=sys.stderr)
@@ -275,13 +232,15 @@ def generate_for_epoch(table_db: TableDatabase,
                        indices: List[int],
                        epoch_file: Path,
                        metrics_file: Path,
+                       input_formatter: TableBertBertInputFormatter,
+                       instance_serialization_func: Callable,
                        args: Namespace):
     print(f'Generating {epoch_file}', file=sys.stderr)
 
     stat_recv, stat_send = multiprocessing.Pipe()
     num_workers = multiprocessing.cpu_count() - 2
 
-    instance_writer_process = multiprocessing.Process(target=write_instance_to_file,
+    instance_writer_process = multiprocessing.Process(target=instance_serialization_func,
                                                       args=(epoch_file, num_workers, stat_send),
                                                       daemon=True)
 
@@ -289,8 +248,8 @@ def generate_for_epoch(table_db: TableDatabase,
 
     workers = []
     worker_status_queue = multiprocessing.Queue()
-    table_bert_config = TableBertConfig.from_dict(vars(args))
-    input_formatter = VanillaTableBertInputFormatter(table_bert_config)
+    # table_bert_config = TableBertConfig.from_dict(vars(args))
+    # input_formatter = VanillaTableBertInputFormatter(table_bert_config)
     for i in range(num_workers):
         indices_chunk = indices[i: len(indices): num_workers]
         worker_process = multiprocessing.Process(

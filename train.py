@@ -13,6 +13,9 @@ import json
 import numpy as np
 
 from table_bert.vanilla_table_bert import VanillaTableBert
+from table_bert.vertical.config import VerticalAttentionTableBertConfig
+from table_bert.vertical.dataset import VerticalAttentionTableBertDataset
+from table_bert.vertical.vertical_attention_table_bert import VerticalAttentionTableBert
 from utils.comm import init_distributed_mode
 from table_bert.config import TableBertConfig
 from table_bert.dataset import TableDataset
@@ -21,15 +24,30 @@ from utils.trainer import Trainer
 from utils.util import parse_arg, init_logger
 
 
+tasks = {
+    'vanilla': {
+        'dataset': TableDataset,
+        'config': TableBertConfig,
+        'model': VanillaTableBert
+    },
+    'vertical_attention': {
+        'dataset': VerticalAttentionTableBertDataset,
+        'config': VerticalAttentionTableBertConfig,
+        'model': VerticalAttentionTableBert
+    }
+}
+
+
 def main():
     args = parse_arg()
+    task = tasks[args.task]
 
     init_distributed_mode(args)
     logger = init_logger(args)
 
     train_data_dir = args.data_dir / 'train'
     dev_data_dir = args.data_dir / 'dev'
-    table_bert_config = TableBertConfig.from_file(
+    table_bert_config = task['config'].from_file(
         args.data_dir / 'config.json', base_model_name=args.base_model_name)
 
     if args.is_master:
@@ -81,7 +99,7 @@ def main():
     if args.no_init:
         raise NotImplementedError
     else:
-        model = VanillaTableBert(table_bert_config)
+        model = task['model'](table_bert_config)
 
     if args.fp16:
         model = model.half()
@@ -110,14 +128,15 @@ def main():
     model.train()
 
     # we also partitation the dev set for every local process
-    dev_set = TableDataset(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
-                           multi_gpu=args.multi_gpu)
+    dataset_cls = task['dataset']
+    dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
+                          multi_gpu=args.multi_gpu)
 
     evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
 
     for epoch in range(max_epoch + 1):  # inclusive
-        epoch_dataset = TableDataset(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
-                                     multi_gpu=args.multi_gpu)
+        epoch_dataset = dataset_cls(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
+                                    multi_gpu=args.multi_gpu)
 
         train_sampler = RandomSampler(epoch_dataset)
 

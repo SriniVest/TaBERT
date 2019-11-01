@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Any
 
 
 class Column(object):
@@ -30,7 +30,7 @@ class Table(object):
         self.id = id
         self.header = header
         self.header_index = {column.name: column for column in header}
-        self.data: List[Dict] = data
+        self.data: List[Any] = data
         self.fields = []
 
         for key, val in kwargs.items():

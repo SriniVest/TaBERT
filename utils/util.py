@@ -11,6 +11,10 @@ from fairseq.optim.lr_scheduler.polynomial_decay_schedule import PolynomialDecay
 
 def parse_arg():
     parser = ArgumentParser()
+    parser.add_argument('--task',
+                        type=str,
+                        default='vanilla',
+                        choices=['vanilla', 'vertical_attention'])
     parser.add_argument('--seed',
                         type=int,
                         default=42,

@@ -1,6 +1,6 @@
 from math import ceil
 from random import choice, shuffle, sample, random
-from typing import List, Callable
+from typing import List, Callable, Dict, Any
 
 from pytorch_pretrained_bert import BertTokenizer
 
@@ -54,6 +54,14 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         return input, span_map
 
     def get_input(self, context: List[str], table: Table):
+        row_data = [
+            column.sample_value_tokens
+            for column in table.header
+        ]
+
+        return self.get_row_input(context, table.header, row_data)
+
+    def get_row_input(self, context: List[str], header: List[Column], row_data: List[Any]):
         if self.config.context_first:
             table_tokens_start_idx = len(context) + 2  # account for [CLS] and [SEP]
             # account for [CLS] and [SEP], and the ending [SEP]
@@ -65,11 +73,11 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
         # generate table tokens
         row_input_tokens = []
-        column_token_span_maps = {}
+        column_token_span_maps = []
         column_start_idx = table_tokens_start_idx
 
-        for col_id, column in enumerate(table.header):
-            value_tokens = column.sample_value_tokens
+        for col_id, column in enumerate(header):
+            value_tokens = row_data[col_id]
             truncated_value_tokens = value_tokens[:self.config.max_cell_len]
 
             column_input_tokens, token_span_map = self.get_cell_input(
@@ -84,26 +92,32 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
             row_input_tokens.extend(column_input_tokens)
             column_start_idx = column_start_idx + len(column_input_tokens)
-            column_token_span_maps[column.name] = token_span_map
+            column_token_span_maps.append(token_span_map)
 
         if row_input_tokens[-1] == self.config.column_delimiter:
             del row_input_tokens[-1]
 
         if self.config.context_first:
             sequence = ['[CLS]'] + context + ['[SEP]'] + row_input_tokens + ['[SEP]']
-            segment_ids = [0] * (len(context) + 2) + [1] * (len(row_input_tokens) + 1)
-            context_token_indices = list(range(0, 1 + len(context)))
+            # segment_ids = [0] * (len(context) + 2) + [1] * (len(row_input_tokens) + 1)
+            segment_a_length = len(context) + 2
+            context_span = (0, 1 + len(context))
+            # context_token_indices = list(range(0, 1 + len(context)))
         else:
             sequence = ['[CLS]'] + row_input_tokens + ['[SEP]'] + context + ['[SEP]']
-            segment_ids = [0] * (len(row_input_tokens) + 2) + [1] * (len(context) + 1)
-            context_token_indices = list(range(len(row_input_tokens) + 1, len(row_input_tokens) + 1 + 1 + len(context) + 1))
+            # segment_ids = [0] * (len(row_input_tokens) + 2) + [1] * (len(context) + 1)
+            segment_a_length = len(row_input_tokens) + 2
+            context_span = (len(row_input_tokens) + 1, len(row_input_tokens) + 1 + 1 + len(context) + 1)
+            # context_token_indices = list(range(len(row_input_tokens) + 1, len(row_input_tokens) + 1 + 1 + len(context) + 1))
 
         instance = {
             'tokens': sequence,
-            'segment_ids': segment_ids,
+            'segment_a_length': segment_a_length,
+            # 'segment_ids': segment_ids,
             'column_spans': column_token_span_maps,
-            'context_length': 1 + len(context),  # [CLS]/[SEP] + input question
-            'context_token_indices': context_token_indices
+            'context_length': 1 + len(context),  # beginning [CLS]/[SEP] + input question
+            'context_span': context_span,
+            # 'context_token_indices': context_token_indices
         }
 
         return instance

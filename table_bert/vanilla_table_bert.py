@@ -90,7 +90,7 @@ class VanillaTableBert(TableBertModel):
             flattened_column_encoding: (batch_size, total_column_token_num, encoding_size)
             column_token_to_column_id: (batch_size, total_column_token_num + 1)
             column_mask: (batch_size, max_column_num)
-
+            aggregator: ['mean_pool', 'max_pool', 'first_token']
         Returns:
             column_encoding: (batch_size, max_column_num, encoding_size)
         """
@@ -163,20 +163,19 @@ class VanillaTableBert(TableBertModel):
 
         for i, instance in enumerate(instances):
             token_ids = self.tokenizer.convert_tokens_to_ids(instance['tokens'])
-            segment_ids = instance['segment_ids']
 
             input_array[i, :len(token_ids)] = token_ids
-            segment_array[i, :len(segment_ids)] = segment_ids
+            segment_array[i, instance['segment_a_length']: ] = 1
             mask_array[i, :len(token_ids)] = 1.
 
             if table_specific_tensors:
-                context_token_indices[i, :instance['context_length']] = instance['context_token_indices']
+                context_token_indices[i, :instance['context_length']] = list(range(*instance['context_span'])) #instance['context_token_indices']
                 context_mask[i, :instance['context_length']] = 1.
 
                 header = tables[i].header
                 for col_id, column in enumerate(header):
-                    if column.name in instance['column_spans']:
-                        col_start, col_end = instance['column_spans'][column.name][column_span]
+                    if col_id < len(instance['column_spans']):
+                        col_start, col_end = instance['column_spans'][col_id][column_span]
 
                         column_token_to_column_id[i, col_start: col_end] = col_id
                         column_token_mask[i, col_start: col_end] = 1.

@@ -79,9 +79,9 @@ class DistributedSampler(Sampler):
 
 
 class TableDataset(Dataset):
-    def __init__(self, training_path, epoch, tokenizer, reduce_memory=False, multi_gpu=False):
-        self.vocab = tokenizer.vocab
-        self.tokenizer = tokenizer
+    def __init__(self, training_path, epoch=0, tokenizer=None, reduce_memory=False, multi_gpu=False):
+        # self.vocab = tokenizer.vocab
+        # self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
         # self.data_epoch = epoch % num_data_epochs
         data_file_prefix = training_path / f"epoch_{self.data_epoch}"

@@ -73,6 +73,8 @@ def remove_invalid_columns(orig_cols):
             ascii_token_count = sum(is_ascii(w) for w in cell_tokens)
             non_ascii_char_count = sum(ord(c) >= 128 and c not in ALLOWED_SPECIAL_SYMBOLS for c in cell)
             non_ascii_token_count = len(cell_tokens) - ascii_token_count
+            # digit_num = sum(is_digit(w) for w in cell_tokens)
+            # is_all_digits = digit_num == len(cell_tokens)
             if len(cell_tokens) > 0 and ascii_token_count == 0 or non_ascii_token_count > ascii_token_count or non_ascii_char_count >= 2:
                 if __DEBUG__:
                     print('invalid cell for ascii rule: ', cell)

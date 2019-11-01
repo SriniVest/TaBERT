@@ -22,7 +22,7 @@ class TableBertConfig(SimpleNamespace):
         masked_column_prob: float = 0.2,
         max_predictions_per_seq: int = 100,
         context_sample_strategy: str = 'nearest',
-        table_mask_strategy: str = 'column_token',
+        table_mask_strategy: str = 'column',
         do_lower_case: bool = True,
         **kwargs
     ):
@@ -76,7 +76,7 @@ class TableBertConfig(SimpleNamespace):
 
         parser.add_argument('--context_sample_strategy', type=str, default='nearest',
                             choices=['nearest', 'concate_and_enumerate'])
-        parser.add_argument('--table_mask_strategy', type=str, default='column_token',
+        parser.add_argument('--table_mask_strategy', type=str, default='column',
                             choices=['column', 'column_token'])
 
         parser.add_argument("--do_lower_case", action="store_true")
@@ -121,4 +121,4 @@ class TableBertConfig(SimpleNamespace):
         return cls(**args)
 
     def save(self, file_path: Path):
-        json.dump(vars(self), file_path.open('w'), indent=2)
+        json.dump(vars(self), file_path.open('w'), indent=2, sort_keys=True, default=str)

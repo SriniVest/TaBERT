@@ -51,10 +51,11 @@ class Trainer(object):
 
     def prepare_sample(self, sample: Dict):
         def _apply_func(x):
-            if self.cuda:
-                x = x.cuda()
-            if self.args.fp16 and x.dtype is torch.float32:
-                x = x.half()
+            if torch.is_tensor(x):
+                if self.cuda:
+                    x = x.cuda()
+                if self.args.fp16 and x.dtype is torch.float32:
+                    x = x.half()
 
             return x
 
@@ -89,7 +90,7 @@ class Trainer(object):
             with maybe_no_sync():
                 # forward and backward
                 loss = self.model(**sample)
-                logging_output = {'sample_size': sample['masked_lm_labels'].ne(-1).sum().item()}
+                logging_output = {'sample_size': sample['sample_size']}
                 self.optimizer.backward(loss)
 
                 logging_outputs.append(logging_output)

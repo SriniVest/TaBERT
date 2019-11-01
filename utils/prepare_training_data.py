@@ -9,6 +9,7 @@ import numpy as np
 import json
 import ujson
 import msgpack
+import signal
 
 import gc
 import torch
@@ -294,6 +295,24 @@ def generate_for_epoch(table_db: TableDatabase,
         f.write(json.dumps(metrics))
 
 
+def graceful_exit(sig=None, frame=None):
+    os.system('redis-cli FLUSHALL')
+    exit(0)
+
+
+def init_redis():
+    # All the configuration parameters set using CONFIG SET
+    # are immediately loaded by Redis and will take effect
+    # starting with the next command executed.
+
+    os.system('redis-cli CONFIG SET save ""')
+    os.system('redis-cli CONFIG SET appendonly no')
+    os.system('redis-cli CONFIG SET maxmemory 450gb')
+    os.system('redis-cli CONFIG SET stop-writes-on-bgsave-error no')
+
+    signal.signal(signal.SIGINT, graceful_exit)
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('--train_corpus', type=Path, required=True)
@@ -305,6 +324,9 @@ def main():
     TableBertConfig.add_args(parser)
 
     args = parser.parse_args()
+
+    init_redis()
+
     tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
@@ -333,6 +355,8 @@ def main():
             epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}"
             metrics_file = args.output_dir / 'train' / f"epoch_{epoch}.metrics.json"
             generate_for_epoch(table_db, train_indices, epoch_filename, metrics_file, args)
+
+    graceful_exit()
 
 
 if __name__ == '__main__':

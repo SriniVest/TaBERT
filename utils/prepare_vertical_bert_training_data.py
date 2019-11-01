@@ -110,6 +110,8 @@ def main():
     input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config)
     tokenizer = input_formatter.tokenizer
 
+    init_redis()
+
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
         print(f'Num entries in database: {len(table_db)}', file=sys.stderr)
@@ -138,7 +140,7 @@ def main():
             write_instance_to_file,
             args)
 
-        for epoch in trange(args.epochs_to_generate, desc='Epoch'):
+        for epoch in trange(args.epochs_to_generate, desc='Epoch', file=sys.stdout):
             gc.collect()
             epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}"
             metrics_file = args.output_dir / 'train' / f"epoch_{epoch}.metrics.json"

@@ -3,6 +3,7 @@ import numpy as np
 
 import torch
 from pytorch_pretrained_bert import BertForPreTraining
+from torch.nn import CrossEntropyLoss
 from torch_scatter import scatter_max, scatter_mean
 
 from table_bert.table_bert import TableBertModel
@@ -21,8 +22,17 @@ class VanillaTableBert(TableBertModel):
         super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
         self.input_formatter = VanillaTableBertInputFormatter(self.config)
 
-    def forward(self, *input: Any, **kwargs: Any):
-        return self._bert_model(*input, **kwargs)
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, **kwargs):
+        sequence_output, _ = self._bert_model.bert(input_ids, token_type_ids, attention_mask,
+                                       output_all_encoded_layers=False)
+        prediction_scores = self._bert_model.cls(sequence_output)
+
+        if masked_lm_labels is not None:
+            loss_fct = CrossEntropyLoss(ignore_index=-1, reduction='sum')
+            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.bert_config.vocab_size), masked_lm_labels.view(-1))
+            return masked_lm_loss
+        else:
+            return prediction_scores
 
     def encode_context_and_table(
         self,

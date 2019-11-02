@@ -166,14 +166,14 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
                         else []
                     )
             )
-            for col_name, span
-            in column_spans.items()
+            for col_id, span
+            in enumerate(column_spans)
         ]
 
         context_candidate_indices = (
-            input_instance['context_token_indices'][1:]
-            if self.config.context_first
-            else input_instance['context_token_indices'][:-1]
+            list(range(*input_instance['context_span']))[1:]
+            if self.config.context_first else
+            list(range(*input_instance['context_span']))[:-1]
         )
 
         masked_sequence, masked_lm_positions, masked_lm_labels, info = self.create_masked_lm_predictions(
@@ -185,7 +185,7 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         instance = {
             "tokens": masked_sequence,
             "token_ids": self.tokenizer.convert_tokens_to_ids(masked_sequence),
-            "segment_a_length": sum(1 for x in input_instance['segment_ids'] if x == 0),
+            "segment_a_length": input_instance['segment_a_length'],
             "masked_lm_positions": masked_lm_positions,
             "masked_lm_labels": masked_lm_labels,
             "masked_lm_label_ids": self.tokenizer.convert_tokens_to_ids(masked_lm_labels),
@@ -259,3 +259,8 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         })
 
         return tokens, masked_indices, masked_token_labels, info
+
+    def remove_unecessary_instance_entries(self, instance: Dict):
+        del instance['tokens']
+        del instance['masked_lm_labels']
+        del instance['info']

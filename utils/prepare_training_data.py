@@ -327,7 +327,10 @@ def main():
 
     init_redis()
 
+    table_bert_config = TableBertConfig.from_dict(vars(args))
+    input_formatter = VanillaTableBertInputFormatter(table_bert_config)
     tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
+
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)
         print(f'Num tables in total: {len(table_db)}', file=sys.stdout)
@@ -348,13 +351,13 @@ def main():
         # generate dev preprocess first
         dev_file = args.output_dir / 'dev' / 'epoch_0'
         dev_metrics_file = args.output_dir / 'dev' / "epoch_0.metrics.json"
-        generate_for_epoch(table_db, dev_indices, dev_file, dev_metrics_file, args)
+        generate_for_epoch(table_db, dev_indices, dev_file, dev_metrics_file, input_formatter, write_instance_to_file, args)
 
         for epoch in trange(args.epochs_to_generate, desc='Epoch'):
             gc.collect()
             epoch_filename = args.output_dir / 'train' / f"epoch_{epoch}"
             metrics_file = args.output_dir / 'train' / f"epoch_{epoch}.metrics.json"
-            generate_for_epoch(table_db, train_indices, epoch_filename, metrics_file, args)
+            generate_for_epoch(table_db, train_indices, epoch_filename, metrics_file, input_formatter, write_instance_to_file, args)
 
     graceful_exit()
 

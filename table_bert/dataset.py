@@ -194,7 +194,8 @@ class TableDataset(Dataset):
             'input_ids': torch.tensor(input_array.astype(np.int64)),
             'attention_mask': torch.tensor(mask_array.astype(np.int64)),
             'token_type_ids': torch.tensor(segment_array.astype(np.int64)),
-            'masked_lm_labels': torch.tensor(lm_label_array.astype(np.int64))
+            'masked_lm_labels': torch.tensor(lm_label_array.astype(np.int64)),
+            'sample_size': (lm_label_array != -1).sum()
         }
 
 

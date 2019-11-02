@@ -20,9 +20,6 @@ class Trainer(object):
         self.cuda = not self.args.cpu and torch.cuda.is_available()
         self.logger = logging.getLogger()
 
-        if args.fp16:
-            self.model = self.model.half()
-
         self.build_optimizer()
 
     def build_optimizer(self):
@@ -34,6 +31,7 @@ class Trainer(object):
         )
 
         if self.args.fp16:
+            self.args.fp16_scale_window = 2 ** 14 / self.args.world_size / self.args.gradient_accumulation_steps
             if self.cuda and torch.cuda.get_device_capability(0)[0] < 7:
                 print('| WARNING: your device does NOT support faster training with --fp16, '
                       'please switch to FP32 which is likely to be faster')
@@ -101,7 +99,7 @@ class Trainer(object):
             logging_outputs = list(chain.from_iterable(logging_outputs))
 
         sample_size = sum(x['sample_size'] for x in logging_outputs)
-        self.optimizer.multiply_grads(self.args.world_size / sample_size)
+        self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 
         # clip grads
         if self.args.clip_norm > 0.:

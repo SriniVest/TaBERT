@@ -74,8 +74,10 @@ def parse_arg():
                         help='Use memory efficient fp16')
     parser.add_argument('--threshold-loss-scale', type=float, default=None)
     parser.add_argument('--fp16-init-scale', type=float, default=128)
-    parser.add_argument('--fp16-scale-window', type=int, default=0)
+    # parser.add_argument('--fp16-scale-window', type=int, default=0)
     parser.add_argument('--fp16-scale-tolerance', type=float, default=0.0)
+    parser.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
+                        help='minimum FP16 loss scale, after which training is stopped')
 
     args = parser.parse_args()
 

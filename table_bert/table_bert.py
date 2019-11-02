@@ -63,7 +63,7 @@ class TableBertModel(nn.Module):
         config = TableBertConfig.from_file(config_file, **override_config)
 
         # old table_bert format
-        if '_bert_model' not in state_dict:
+        if not any(key.startswith('_bert_model') for key in state_dict):
             bert_model = BertForMaskedLM.from_pretrained(
                 config.base_model_name,
                 state_dict=state_dict

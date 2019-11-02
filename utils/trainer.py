@@ -99,15 +99,20 @@ class Trainer(object):
             logging_outputs = list(chain.from_iterable(logging_outputs))
 
         sample_size = sum(x['sample_size'] for x in logging_outputs)
-        self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 
-        # clip grads
-        if self.args.clip_norm > 0.:
-            grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+        try:
+            self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 
-        # take an optimization step
-        self.optimizer.step()
-        self.take_one_step()
+            # clip grads
+            if self.args.clip_norm > 0.:
+                grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+
+            # take an optimization step
+            self.optimizer.step()
+            self.take_one_step()
+        except OverflowError as e:
+            print('| WARNING: overflow detected, ' + str(e))
+            self.optimizer.zero_grad()
 
     def take_one_step(self):
         self._num_updates += 1

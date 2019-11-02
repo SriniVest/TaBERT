@@ -35,7 +35,7 @@ class Evaluator(object):
 
             with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
                 for step, batch in enumerate(data_loader):
-                    batch = {k: v.to(self.device) for k, v in batch.items()}
+                    batch = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
                     # (batch_size, max_seq_len, vocab_size)
                     predictions = model(batch['input_ids'], batch['token_type_ids'], batch['attention_mask'])

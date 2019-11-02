@@ -35,7 +35,7 @@ def parse_arg():
 
     # distributed training
     parser.add_argument("--ddp-backend", type=str, default='pytorch', choices=['pytorch', 'apex'])
-    parser.add_argument("--local-rank",
+    parser.add_argument("--local_rank", "--local-rank",
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")

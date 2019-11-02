@@ -87,21 +87,21 @@ class Trainer(object):
 
             with maybe_no_sync():
                 # forward and backward
-                loss = self.model(**sample)
+                loss = self.model(**sample) / int(sample['sample_size'])
                 logging_output = {'sample_size': sample['sample_size']}
                 self.optimizer.backward(loss)
 
                 logging_outputs.append(logging_output)
 
         # gather logging outputs from all replicas
-        if self.args.world_size > 1:
-            logging_outputs = distributed_utils.all_gather_list(logging_outputs)
-            logging_outputs = list(chain.from_iterable(logging_outputs))
+        # if self.args.world_size > 1:
+        #     logging_outputs = distributed_utils.all_gather_list(logging_outputs)
+        #     logging_outputs = list(chain.from_iterable(logging_outputs))
 
-        sample_size = sum(x['sample_size'] for x in logging_outputs)
+        # sample_size = sum(x['sample_size'] for x in logging_outputs)
 
         try:
-            self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
+            # self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 
             # clip grads
             if self.args.clip_norm > 0.:

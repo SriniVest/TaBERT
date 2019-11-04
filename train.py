@@ -146,7 +146,7 @@ def main():
                                       collate_fn=epoch_dataset.collate)
 
         with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}", file=sys.stdout,
-                  disable=not args.is_master) as pbar:
+                  disable=not args.is_master, mininterval=60) as pbar:
             samples_iter = GroupedIterator(iter(train_dataloader), args.gradient_accumulation_steps)
 
             for step, samples in enumerate(samples_iter):

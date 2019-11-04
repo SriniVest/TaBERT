@@ -112,9 +112,14 @@ class Trainer(object):
         # sample_size = sum(x['sample_size'] for x in logging_outputs)
         logging_output = {
             'sample_size': sum(x['sample_size'] for x in logging_outputs),
-            'total_loss': sum(x['total_loss'] for x in logging_outputs)
+            'total_loss': sum(x['total_loss'] for x in logging_outputs),
         }
-        logging_output['avg_loss'] = logging_output['total_loss'] / logging_output['sample_size']
+        avg_loss = logging_output['total_loss'] / logging_output['sample_size']
+        avg_ppl = math.exp(avg_loss)
+        logging_output.update({
+            'avg_loss': avg_loss,
+            'avg_ppl': avg_ppl
+        })
 
         try:
             # self.optimizer.multiply_grads(self.args.world_size / float(sample_size))

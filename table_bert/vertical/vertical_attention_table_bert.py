@@ -1,4 +1,8 @@
+import gc
 import math
+import sys
+from tqdm import tqdm
+
 import numpy as np
 
 import torch
@@ -163,6 +167,12 @@ class VerticalAttentionTableBert(VanillaTableBert):
             for _ in range(self.config.num_vertical_layers)
         ])
 
+        for module in [
+            self.vertical_embedding_layer,
+            self.vertical_transformer_layers
+        ]:
+            module.apply(self._bert_model.init_bert_weights)
+
     @property
     def parameter_type(self):
         return next(self.parameters()).dtype
@@ -296,11 +306,11 @@ class VerticalAttentionTableBert(VanillaTableBert):
         # mean-pool last encoding
 
         # (batch_size, 1, 1)
-        table_sizes = table_mask[:, :, 0].sum(dim=-1)[:, None, None]
+        table_row_nums = table_mask[:, :, 0].sum(dim=-1)[:, None, None]
         # (batch_size, context_len, hidden_size)
-        mean_pooled_context_encoding = last_context_encoding.sum(dim=1) / table_sizes
+        mean_pooled_context_encoding = last_context_encoding.sum(dim=1) / table_row_nums
         # (batch_size, max_column_num, hidden_size)
-        mean_pooled_schema_encoding = last_table_encoding.sum(dim=1) / table_sizes
+        mean_pooled_schema_encoding = last_table_encoding.sum(dim=1) / table_row_nums
 
         return mean_pooled_context_encoding, mean_pooled_schema_encoding
 
@@ -394,3 +404,28 @@ class VerticalAttentionTableBert(VanillaTableBert):
         #     print(instance)
 
         return tensor_dict, instances
+
+    def validate(self, data_loader):
+        gc.collect()
+
+        was_training = self.training
+        self.eval()
+
+        cum_loss = num_slots = 0.
+        with torch.no_grad():
+            with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
+                for step, batch in enumerate(data_loader):
+                    loss_sum = self(**batch)
+
+                    cum_loss += loss_sum.item()
+                    num_slots += float(batch['sample_num'])
+
+                    pbar.update(1)
+
+        if was_training:
+            self.train()
+
+        ppl = math.exp(cum_loss / num_slots)
+        result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
+
+        return result

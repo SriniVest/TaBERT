@@ -79,7 +79,7 @@ class DistributedSampler(Sampler):
 
 
 class TableDataset(Dataset):
-    def __init__(self, training_path, epoch=0, tokenizer=None, reduce_memory=False, multi_gpu=False):
+    def __init__(self, training_path, epoch=0, tokenizer=None, reduce_memory=False, multi_gpu=False, indices=None):
         # self.vocab = tokenizer.vocab
         # self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
@@ -92,31 +92,34 @@ class TableDataset(Dataset):
 
         assert reduce_memory is False, 'reduce_memory is not implemented'
 
-        indices = []
-        if multi_gpu:
-            logging.info(f'Load a sub-sample of the whole dataset')
-            num_shards = torch.distributed.get_world_size()
-            local_shard_id = torch.distributed.get_rank()
+        if not indices:
+            if multi_gpu:
+                num_shards = torch.distributed.get_world_size()
+                local_shard_id = torch.distributed.get_rank()
 
-            shard_size = dataset_size // num_shards
+                shard_size = dataset_size // num_shards
 
-            logging.info(f'dataset_size={dataset_size}, shard_size={shard_size}')
+                logging.info(f'dataset_size={dataset_size}, shard_size={shard_size}')
 
-            g = torch.Generator()
-            g.manual_seed(self.epoch)
-            indices = torch.randperm(dataset_size, generator=g).tolist()
+                g = torch.Generator()
+                g.manual_seed(self.epoch)
+                indices = torch.randperm(dataset_size, generator=g).tolist()
 
-            # make it evenly divisible
-            indices = indices[:shard_size * num_shards]
-            assert len(indices) == shard_size * num_shards
+                # make it evenly divisible
+                indices = indices[:shard_size * num_shards]
+                assert len(indices) == shard_size * num_shards
 
-            # subsample
-            indices = indices[local_shard_id:len(indices):num_shards]
-            assert len(indices) == shard_size
+                # subsample
+                indices = indices[local_shard_id:len(indices):num_shards]
+                assert len(indices) == shard_size
 
+                indices = set(indices)
+        else:
             indices = set(indices)
 
         logging.info(f"Loading examples from {training_path} for epoch {epoch}")
+        if indices:
+            logging.info(f'Load a sub-sample of the whole dataset')
 
         self.examples = self.load_epoch(data_file_prefix, metrics['shard_num'], indices)
 

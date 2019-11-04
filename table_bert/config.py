@@ -13,7 +13,7 @@ class TableBertConfig(SimpleNamespace):
         base_model_name: str = 'bert-base-uncased',
         column_delimiter: str = '[SEP]',
         context_first: bool = True,
-        cell_input_template: str = 'column (value) (type)',
+        cell_input_template: str = 'column | type | value',
         column_representation: str = 'mean_pool',
         max_cell_len: int = 5,
         max_sequence_len: int = 512,
@@ -39,9 +39,9 @@ class TableBertConfig(SimpleNamespace):
 
         self.do_lower_case = do_lower_case
 
-        tokenizer = BertTokenizer.from_pretrained(self.base_model_name)
+        # tokenizer = BertTokenizer.from_pretrained(self.base_model_name)
         if isinstance(cell_input_template, str):
-            cell_input_template = tokenizer.tokenize(cell_input_template)
+            cell_input_template = cell_input_template.split(' ')
         self.cell_input_template = cell_input_template
 
         self.masked_context_prob = masked_context_prob
@@ -59,7 +59,7 @@ class TableBertConfig(SimpleNamespace):
         parser.set_defaults(context_first=True)
 
         parser.add_argument("--column_delimiter", type=str, default='[SEP]', help='Column delimiter')
-        parser.add_argument("--cell_input_template", type=str, default='column|type|value', help='Cell representation')
+        parser.add_argument("--cell_input_template", type=str, default='column | type | value', help='Cell representation')
         parser.add_argument("--column_representation", type=str, default='mean_pool', help='Column representation')
 
         # training specifications

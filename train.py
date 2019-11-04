@@ -122,17 +122,19 @@ def main():
 
     trainer = Trainer(model, args)
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Current config: {args}")
-
     model.train()
 
     # we also partitation the dev set for every local process
+    print('loading dev set...')
+    sys.stdout.flush()
     dataset_cls = task['dataset']
     dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
                           multi_gpu=args.multi_gpu)
 
     evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Current config: {args}")
 
     for epoch in range(max_epoch + 1):  # inclusive
         epoch_dataset = dataset_cls(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
@@ -165,7 +167,7 @@ def main():
 
             # perform validation
             logger.info("** ** * Perform validation ** ** * ")
-            dev_results = evaluator.evaluate(model.module if args.multi_gpu else model, dev_set)
+            dev_results = trainer.validate(dev_set)
 
             if args.is_master:
                 logger.info('** ** * Validation Results ** ** * ')

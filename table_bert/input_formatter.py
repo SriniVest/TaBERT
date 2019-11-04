@@ -158,13 +158,13 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
         column_candidate_indices = [
             (
-                    list(range(*span['column_name'])) +
-                    list(range(*span['type'])) +
-                    (
-                        span['other_tokens']
-                        if random() < 0.01
-                        else []
-                    )
+                list(range(*span['column_name'])) +
+                list(range(*span['type'])) +
+                (
+                    span['other_tokens']
+                    if random() < 0.01
+                    else []
+                )
             )
             for col_id, span
             in enumerate(column_spans)

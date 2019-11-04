@@ -1,11 +1,15 @@
 import contextlib
 import sys
+import math
 from argparse import Namespace
 from itertools import chain
 from typing import Dict
 import logging
 
 import torch
+from torch.utils.data import DataLoader, SequentialSampler
+
+torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 
 from fairseq import optim, distributed_utils
@@ -111,7 +115,7 @@ class Trainer(object):
             self.optimizer.step()
             self.take_one_step()
         except OverflowError as e:
-            print('| WARNING: overflow detected, ' + str(e))
+            logging.error('| WARNING: overflow detected, ' + str(e))
             self.optimizer.zero_grad()
 
     def take_one_step(self):
@@ -120,3 +124,28 @@ class Trainer(object):
         if self._num_updates >= self.lr_scheduler.total_num_update:
             logging.warning('Reached max num of updates')
             exit(0)
+
+    def validate(self, dataset):
+        def collate_fn(x):
+            return self.prepare_sample(dataset.collate(x))
+
+        data_loader = DataLoader(
+            dataset,
+            batch_size=self.args.train_batch_size * 2, sampler=SequentialSampler(dataset),
+            collate_fn=collate_fn
+        )
+
+        model = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
+
+        valid_result = model.validate(data_loader)
+
+        # handel distributed evaluation
+        if self.args.multi_gpu:
+            valid_result_list = distributed_utils.all_gather_list(valid_result)
+
+            cum_loss = sum(x['cum_loss'] for x in valid_result_list)
+            num_slots = sum(x['num_slots'] for x in valid_result_list)
+            ppl = math.exp(cum_loss / num_slots)
+            valid_result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
+
+        return valid_result

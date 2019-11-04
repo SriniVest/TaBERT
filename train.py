@@ -89,7 +89,7 @@ def main():
     torch.manual_seed(args.seed)
 
     if not args.cpu:
-        torch.cuda.manual_seed(args.seed * args.global_rank)
+        torch.cuda.manual_seed_all(args.seed)
 
     if args.output_dir.is_dir() and list(args.output_dir.iterdir()):
         logger.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")

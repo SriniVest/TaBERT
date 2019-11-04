@@ -131,12 +131,11 @@ def main():
     dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
                           multi_gpu=args.multi_gpu)
 
-    evaluator = Evaluator(batch_size=args.train_batch_size * 4, args=args)
-
     logger.info("***** Running training *****")
     logger.info(f"  Current config: {args}")
 
     for epoch in range(max_epoch + 1):  # inclusive
+        model.train()
         epoch_dataset = dataset_cls(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
                                     multi_gpu=args.multi_gpu)
 
@@ -151,10 +150,10 @@ def main():
             samples_iter = GroupedIterator(iter(train_dataloader), args.gradient_accumulation_steps)
 
             for step, samples in enumerate(samples_iter):
-                trainer.train_step(samples)
+                logging_output = trainer.train_step(samples)
 
                 pbar.update(len(samples))
-                # pbar.set_postfix_str(', '.join(f"{k} {v}" for k, v in trainer.stat()))
+                pbar.set_postfix_str(', '.join(f"{k}: {v:.4f}" for k, v in logging_output.items()))
 
             logger.info(f'Epoch {epoch} finished.')
 

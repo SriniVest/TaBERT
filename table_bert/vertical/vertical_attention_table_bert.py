@@ -269,7 +269,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
             # column_token_scores = self.column_token_prediction(column_token_span_representation, column_token_position_embedding)
             column_token_scores = self._bert_model.cls.predictions(column_token_span_representation)
 
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
             masked_context_token_loss = loss_fct(context_token_scores.view(-1, self.config.vocab_size), masked_context_token_labels.view(-1))
             masked_column_token_loss = loss_fct(column_token_scores.view(-1, self.config.vocab_size), masked_column_token_labels.view(-1))
             loss = masked_context_token_loss + masked_column_token_loss
@@ -418,7 +418,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
                     loss_sum = self(**batch)
 
                     cum_loss += loss_sum.item()
-                    num_slots += float(batch['sample_num'])
+                    num_slots += float(batch['sample_size'])
 
                     pbar.update(1)
 

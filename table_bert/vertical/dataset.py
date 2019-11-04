@@ -203,10 +203,10 @@ def load_epoch(file_prefix: Path, shard_num: int, valid_indices: Set = None):
 
         shard_size = mlm_data_offsets.shape[0]
 
-        for chunk_id in tqdm(range(shard_size), desc=f'Loading shard {shard_id}', file=sys.stdout):
+        for chunk_id in tqdm(range(shard_size), desc=f'Loading shard {shard_id}', file=sys.stdout, miniters=10000):
             idx += 1
 
-            # if idx >= 100000:
+            # if idx >= 1000:
             #     finished = True
             #     break
 

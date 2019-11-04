@@ -5,6 +5,7 @@ from argparse import Namespace
 from itertools import chain
 from typing import Dict
 import logging
+import numpy as np
 
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
@@ -91,10 +92,16 @@ class Trainer(object):
 
             with maybe_no_sync():
                 # forward and backward
-                loss = self.model(**sample) / int(sample['sample_size'])
-                logging_output = {'sample_size': sample['sample_size']}
-                self.optimizer.backward(loss)
+                sample_size = int(sample['sample_size'])
+                total_loss = self.model(**sample)
 
+                avg_loss = total_loss / sample_size
+                self.optimizer.backward(avg_loss)
+
+                logging_output = {
+                    'sample_size': sample['sample_size'],
+                    'total_loss': total_loss.item()
+                }
                 logging_outputs.append(logging_output)
 
         # gather logging outputs from all replicas
@@ -103,6 +110,11 @@ class Trainer(object):
         #     logging_outputs = list(chain.from_iterable(logging_outputs))
 
         # sample_size = sum(x['sample_size'] for x in logging_outputs)
+        logging_output = {
+            'sample_size': sum(x['sample_size'] for x in logging_outputs),
+            'total_loss': sum(x['total_loss'] for x in logging_outputs)
+        }
+        logging_output['avg_loss'] = logging_output['total_loss'] / logging_output['sample_size']
 
         try:
             # self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
@@ -117,6 +129,8 @@ class Trainer(object):
         except OverflowError as e:
             logging.error('| WARNING: overflow detected, ' + str(e))
             self.optimizer.zero_grad()
+
+        return logging_output
 
     def take_one_step(self):
         self._num_updates += 1

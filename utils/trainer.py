@@ -121,6 +121,13 @@ class Trainer(object):
             'avg_ppl': avg_ppl
         })
 
+        if (
+            0 < self.args.empty_cache_freq <= self._num_updates and
+            self._num_updates % self.args.empty_cache_freq == 0 and
+            not self.args.cpu
+        ):
+            torch.cuda.empty_cache()
+
         try:
             # self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 

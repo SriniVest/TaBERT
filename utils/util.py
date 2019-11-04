@@ -61,6 +61,8 @@ def parse_arg():
                         help='learning rate for the first N epochs; all epochs >N using LR_N'
                              ' (note: this may be interpreted differently depending on --lr-scheduler)')
     parser.add_argument('--clip-norm', default=0., type=float, help='clip gradient')
+    parser.add_argument('--empty-cache-freq', default=0, type=int,
+                        help='how often to clear the PyTorch CUDA cache (0 to disable)')
 
     FairseqAdam.add_args(parser)
     PolynomialDecaySchedule.add_args(parser)

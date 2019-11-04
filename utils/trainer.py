@@ -132,8 +132,9 @@ class Trainer(object):
             # self.optimizer.multiply_grads(self.args.world_size / float(sample_size))
 
             # clip grads
-            if self.args.clip_norm > 0.:
-                grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+            # if self.args.clip_norm > 0.:
+            grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+            # logging.info(f'Iter {self._num_updates} Gradient Norm: {grad_norm}')
 
             # take an optimization step
             self.optimizer.step()

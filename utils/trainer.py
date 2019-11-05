@@ -3,18 +3,27 @@ import sys
 import math
 from argparse import Namespace
 from itertools import chain
+from pathlib import Path
 from typing import Dict
 import logging
+
+import fairseq
 import numpy as np
 
 import torch
+from fairseq.checkpoint_utils import convert_state_dict_type
+from torch.nn.modules.loss import _Loss
 from torch.utils.data import DataLoader, SequentialSampler
 
 # torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 
-from fairseq import optim, distributed_utils
+from fairseq import optim, distributed_utils, checkpoint_utils, utils as fairseq_utils
 from fairseq.optim import lr_scheduler
+
+
+class DummyCriterion(_Loss):
+    pass
 
 
 class Trainer(object):
@@ -22,10 +31,32 @@ class Trainer(object):
         self.model = model
         self.args = args
         self._num_updates = 0
+        self._epoch = 0
+        self._in_epoch_step = 0
         self.cuda = not self.args.cpu and torch.cuda.is_available()
         self.logger = logging.getLogger()
 
         self.build_optimizer()
+
+    @property
+    def epoch(self):
+        return self._epoch
+
+    @property
+    def in_epoch_step(self):
+        return self._in_epoch_step
+
+    def next_epoch(self):
+        self._in_epoch_step = 0
+        self._epoch += 1
+
+    @property
+    def device(self):
+        return next(self.unwrapped_model.parameters()).device
+
+    @property
+    def unwrapped_model(self):
+        return self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
 
     def build_optimizer(self):
         params = list(
@@ -147,6 +178,7 @@ class Trainer(object):
 
     def take_one_step(self):
         self._num_updates += 1
+        self._in_epoch_step += 1
         self.lr_scheduler.step_update(self._num_updates)
         if self._num_updates >= self.lr_scheduler.total_num_update:
             logging.warning('Reached max num of updates')
@@ -176,3 +208,62 @@ class Trainer(object):
             valid_result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
 
         return valid_result
+
+    def save_checkpoint(self, ckpt_file: Path):
+        if self.args.is_master:
+            state_dict = {
+                'args': self.args,
+                'model': self.unwrapped_model.state_dict(),
+                'last_optimizer_state': convert_state_dict_type(self.optimizer.state_dict()),
+                'last_lr_scheduler_state': self.lr_scheduler.state_dict(),
+                'trainer_state': {
+                    'num_updates': self.num_updates,
+                    'epoch': self.epoch,
+                    'in_epoch_step': self._in_epoch_step
+                },
+            }
+
+            torch.save(state_dict, ckpt_file)
+
+    def load_checkpoint(self, ckpt_file: Path):
+        if ckpt_file.exists():
+            state = torch.load(ckpt_file, map_location=self.device)
+
+            # load model parameters
+            self.unwrapped_model.load_state_dict(state['model'], strict=True)
+
+            self.build_optimizer()
+
+            self.lr_scheduler.load_state_dict(state.get('last_lr_scheduler_state', None))
+            self.optimizer.load_state_dict(state.get('last_optimizer_state', None))
+
+            trainer_state = state['trainer_state']
+            self.load_state_dict(trainer_state)
+
+            saved_args = state['args']
+            for key in [
+                'world_size',
+                'train_batch_size',
+                'gradient_accumulation_steps'
+            ]:
+                assert getattr(saved_args, key) == getattr(self.args, key), \
+                    f'{key} value must match between saved model checkpoint and current config, got ' \
+                    f'{getattr(saved_args, key)} and {getattr(self.args, key)}'
+        else:
+            raise FileNotFoundError(ckpt_file)
+
+    @property
+    def num_updates(self):
+        return self._num_updates
+
+    def load_state_dict(self, state_dict):
+        self._num_updates = state_dict['num_updates']
+        self.lr_scheduler.step_update(self.num_updates)
+        self._epoch = state_dict['epoch']
+        self._in_epoch_step = state_dict['in_epoch_step']
+
+    def resume_batch_loader(self, samples_iter):
+        """Resume batch loader to in_epoch_step if we resume training"""
+        if self.in_epoch_step > 0:
+            for _ in range(self.in_epoch_step):
+                x = next(samples_iter)

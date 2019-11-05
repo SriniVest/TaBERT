@@ -63,6 +63,7 @@ def parse_arg():
     parser.add_argument('--clip-norm', default=0., type=float, help='clip gradient')
     parser.add_argument('--empty-cache-freq', default=0, type=int,
                         help='how often to clear the PyTorch CUDA cache (0 to disable)')
+    parser.add_argument('--save_checkpoint_every_niter', default=10000, type=int)
 
     FairseqAdam.add_args(parser)
     PolynomialDecaySchedule.add_args(parser)

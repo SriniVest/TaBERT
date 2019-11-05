@@ -1,5 +1,6 @@
 import re
 import sys
+from pathlib import Path
 
 import torch
 import random
@@ -73,7 +74,7 @@ def main():
     if args.cpu:
         device = torch.device('cpu')
     else:
-        device = torch.cuda.current_device()
+        device = torch.device(f'cuda:{torch.cuda.current_device()}')
 
     logger.info("device: {} gpu_id: {}, distributed training: {}, 16-bits training: {}".format(
         device, args.local_rank, bool(args.multi_gpu), args.fp16))
@@ -122,6 +123,14 @@ def main():
 
     trainer = Trainer(model, args)
 
+    checkpoint_file = args.output_dir / 'model.ckpt.bin'
+    is_resumed = False
+    # trainer.save_checkpoint(checkpoint_file)
+    if checkpoint_file.exists():
+        logger.info(f'Logging checkpoint file {checkpoint_file}')
+        is_resumed = True
+        trainer.load_checkpoint(checkpoint_file)
+
     model.train()
 
     # we also partitation the dev set for every local process
@@ -134,26 +143,45 @@ def main():
     logger.info("***** Running training *****")
     logger.info(f"  Current config: {args}")
 
-    for epoch in range(max_epoch + 1):  # inclusive
+    if trainer.num_updates > 0:
+        logger.info(f'Resume training at epoch {trainer.epoch}, '
+                    f'epoch step {trainer.in_epoch_step}, '
+                    f'global step {trainer.num_updates}')
+
+    start_epoch = trainer.epoch
+    for epoch in range(start_epoch, max_epoch + 1):  # inclusive
         model.train()
-        epoch_dataset = dataset_cls(epoch=epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
-                                    multi_gpu=args.multi_gpu)
 
-        train_sampler = RandomSampler(epoch_dataset)
+        with torch.random.fork_rng(devices=None if args.cpu else [device.index]):
+            torch.random.manual_seed(131 + epoch)
 
-        train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=real_batch_size,
-                                      num_workers=0,
-                                      collate_fn=epoch_dataset.collate)
+            epoch_dataset = dataset_cls(epoch=trainer.epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
+                                        multi_gpu=args.multi_gpu)
+            train_sampler = RandomSampler(epoch_dataset)
+            train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=real_batch_size,
+                                          num_workers=0,
+                                          collate_fn=epoch_dataset.collate)
 
-        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}", file=sys.stdout,
-                  disable=not args.is_master) as pbar:
-            samples_iter = GroupedIterator(iter(train_dataloader), args.gradient_accumulation_steps)
+        samples_iter = GroupedIterator(iter(train_dataloader), args.gradient_accumulation_steps)
+        trainer.resume_batch_loader(samples_iter)
 
-            for step, samples in enumerate(samples_iter):
+        with tqdm(total=len(samples_iter), initial=trainer.in_epoch_step,
+                  desc=f"Epoch {epoch}", file=sys.stdout, disable=not args.is_master) as pbar:
+
+            for samples in samples_iter:
                 logging_output = trainer.train_step(samples)
 
-                pbar.update(len(samples))
+                pbar.update(1)
                 pbar.set_postfix_str(', '.join(f"{k}: {v:.4f}" for k, v in logging_output.items()))
+
+                if (
+                    0 < trainer.num_updates and
+                    trainer.num_updates % args.save_checkpoint_every_niter == 0 and
+                    args.is_master
+                ):
+                    # Save model checkpoint
+                    logger.info("** ** * Saving checkpoint file ** ** * ")
+                    trainer.save_checkpoint(checkpoint_file)
 
             logger.info(f'Epoch {epoch} finished.')
 
@@ -174,6 +202,8 @@ def main():
 
             # flush logging information to disk
             sys.stderr.flush()
+
+        trainer.next_epoch()
 
 
 if __name__ == '__main__':

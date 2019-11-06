@@ -1,3 +1,4 @@
+import h5py
 from table_bert.content_based_table_bert import VerticalAttentionTableBert
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
 from table_bert.vertical.dataset import serialize_row_data
@@ -35,8 +36,12 @@ def write_instance_to_file(
             'mlm_data_offsets': np.uint64(mlm_data_offsets),
         }
 
-        tgt_file = output_file.with_name(output_file.name + f'.shard{shard_id}.bin')
-        torch.save(data, str(tgt_file), pickle_protocol=4)
+        tgt_file = output_file.with_name(output_file.name + f'.shard{shard_id}.h5')
+        with h5py.File(str(tgt_file), 'w') as f:
+            for key, val in data.items():
+                f.create_dataset(key, data=val)
+
+        # torch.save(data, str(tgt_file), pickle_protocol=4)
 
         shard_id += 1
         del row_data_sequences[:]

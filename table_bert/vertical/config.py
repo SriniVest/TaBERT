@@ -26,4 +26,6 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         parser.add_argument("--num_vertical_attention_heads", type=int, default=6)
         parser.add_argument("--num_vertical_layers", type=int, default=3)
         parser.add_argument("--sample_row_num", type=int, default=3)
-        parser.add_argument("--predict_cell_tokens", action='store_true', default=False)
+        parser.add_argument("--predict_cell_tokens", action='store_true', dest='predict_cell_tokens')
+        parser.add_argument("--no_predict_cell_tokens", action='store_false', dest='predict_cell_tokens')
+        parser.set_defaults(predict_cell_tokens=False)

@@ -8,6 +8,10 @@ import subprocess
 import torch
 import torch.distributed as dist
 
+from logging import getLogger
+
+logger = getLogger()
+
 
 def get_rank():
     if not dist.is_available():
@@ -113,23 +117,22 @@ def accumulate_predictions_from_multiple_gpus(predictions_per_gpu):
 
 
 def sig_handler(signum, frame):
-    print("Signal handler called with signal " + str(signum))
+    logger.warning("Signal handler called with signal " + str(signum))
     prod_id = int(os.environ['SLURM_PROCID'])
-    print("Host: %s - Global rank: %i" % (socket.gethostname(), prod_id))
     if prod_id == 0:
-        print("Requeuing job " + os.environ['SLURM_JOB_ID'])
+        logger.warning("Requeuing job " + os.environ['SLURM_JOB_ID'])
         os.system('scontrol requeue ' + os.environ['SLURM_JOB_ID'])
     else:
-        print("Not the master process, no need to requeue.")
+        logger.warning("Not the master process, no need to requeue.")
     sys.exit(-1)
 
 
 def term_handler(signum, frame):
-    print("Signal handler called with signal " + str(signum))
-    print("Bypassing SIGTERM.")
+    logger.warning("Signal handler called with signal " + str(signum))
+    logger.warning("Bypassing SIGTERM.")
 
 
-def init_signal_handler(logger):
+def init_signal_handler():
     """
     Handle signals sent by SLURM for time limit / pre-emption.
     """

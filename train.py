@@ -17,7 +17,7 @@ from table_bert.vanilla_table_bert import VanillaTableBert
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
 from table_bert.vertical.dataset import VerticalAttentionTableBertDataset
 from table_bert.vertical.vertical_attention_table_bert import VerticalAttentionTableBert
-from utils.comm import init_distributed_mode
+from utils.comm import init_distributed_mode, init_signal_handler
 from table_bert.config import TableBertConfig
 from table_bert.dataset import TableDataset
 from utils.evaluator import Evaluator
@@ -45,6 +45,8 @@ def main():
 
     init_distributed_mode(args)
     logger = init_logger(args)
+
+    init_signal_handler()
 
     train_data_dir = args.data_dir / 'train'
     dev_data_dir = args.data_dir / 'dev'

@@ -242,7 +242,7 @@ def generate_for_epoch(table_db: TableDatabase,
     num_workers = multiprocessing.cpu_count() - 2
 
     instance_writer_process = multiprocessing.Process(target=instance_serialization_func,
-                                                      args=(epoch_file, num_workers, stat_send),
+                                                      args=(epoch_file, num_workers, stat_send, input_formatter),
                                                       daemon=True)
 
     debug = True

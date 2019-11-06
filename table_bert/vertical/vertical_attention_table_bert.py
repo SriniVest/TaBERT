@@ -119,7 +119,7 @@ class SpanBasedPrediction(nn.Module):
     def __init__(self, config: TableBertConfig, prediction_layer: BertLMPredictionHead):
         super(SpanBasedPrediction, self).__init__()
         
-        self.dense1 = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.dense1 = nn.Linear(config.hidden_size * 2, config.hidden_size, bias=False)
         self.layer_norm1 = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dense2 = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         self.layer_norm2 = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -127,7 +127,7 @@ class SpanBasedPrediction(nn.Module):
         self.prediction = prediction_layer
 
     def forward(self, span_representation, position_embedding) -> torch.Tensor:
-        h = self.layer_norm(
+        h = self.layer_norm1(
             gelu(
                 self.dense1(
                     torch.cat(
@@ -152,14 +152,16 @@ class SpanBasedPrediction(nn.Module):
 class VerticalAttentionTableBert(VanillaTableBert):
     def __init__(
         self,
-        config: TableBertConfig,
+        config: VerticalAttentionTableBertConfig,
         bert_model: BertForPreTraining = None,
         **kwargs
     ):
         super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
 
         self.input_formatter = VerticalAttentionTableBertInputFormatter(self.config)
-        # self.column_span_prediction = SpanBasedPrediction(config, self._bert_model.cls.predictions)
+
+        if config.predict_cell_tokens:
+            self.span_based_prediction = SpanBasedPrediction(config, self._bert_model.cls.predictions)
 
         self.vertical_embedding_layer = VerticalEmbeddingLayer()
         self.vertical_transformer_layers = nn.ModuleList([
@@ -177,6 +179,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
     def parameter_type(self):
         return next(self.parameters()).dtype
 
+    # noinspection PyMethodOverriding
     def forward(
         self,
         input_ids: torch.Tensor, segment_ids: torch.Tensor,
@@ -187,6 +190,9 @@ class VerticalAttentionTableBert(VanillaTableBert):
         masked_column_token_column_ids: torch.Tensor = None,
         masked_column_token_positions: torch.Tensor = None,
         masked_column_token_labels: torch.Tensor = None,
+        masked_cell_token_positions: torch.Tensor = None,
+        masked_cell_token_column_ids: torch.Tensor = None,
+        masked_cell_token_labels: torch.Tensor = None,
         **kwargs
     ):
         """
@@ -251,12 +257,29 @@ class VerticalAttentionTableBert(VanillaTableBert):
         context_encoding = context_encoding * context_token_mask.unsqueeze(-1)
 
         # perform vertical attention
-        context_encoding, schema_encoding = self.vertical_transform(
+        context_encoding, schema_encoding, final_table_encoding = self.vertical_transform(
             context_encoding, context_token_mask, table_encoding, table_mask)
 
         if masked_column_token_labels is not None:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
+
             # context MLM loss
             context_token_scores = self._bert_model.cls.predictions(context_encoding)
+
+            # table cell span prediction loss
+            if self.config.predict_cell_tokens:
+                # (batch_size, max_row_num, max_masked_cell_token_num)
+                masked_cell_token_position_embedding = self.bert.embeddings.position_embeddings(masked_cell_token_positions)
+                # (batch_size, max_row_num, max_masked_cell_token_num)
+                masked_cell_representation = torch.gather(
+                    final_table_encoding,
+                    dim=2,
+                    index=masked_cell_token_column_ids.unsqueeze(-1).expand(-1, -1, -1, bert_output.size(-1))
+                )
+                # (batch_size, max_row_num, max_masked_cell_token_num, vocab_size)
+                cell_token_scores = self.span_based_prediction(masked_cell_representation, masked_cell_token_position_embedding)
+                # scalar
+                masked_cell_token_loss = loss_fct(cell_token_scores.view(-1, self.config.vocab_size), masked_cell_token_labels.view(-1))
 
             # table schema MLM loss
             # (batch_size, masked_column_token_num, hidden_size)
@@ -269,10 +292,12 @@ class VerticalAttentionTableBert(VanillaTableBert):
             # column_token_scores = self.column_token_prediction(column_token_span_representation, column_token_position_embedding)
             column_token_scores = self._bert_model.cls.predictions(column_token_span_representation)
 
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
             masked_context_token_loss = loss_fct(context_token_scores.view(-1, self.config.vocab_size), masked_context_token_labels.view(-1))
             masked_column_token_loss = loss_fct(column_token_scores.view(-1, self.config.vocab_size), masked_column_token_labels.view(-1))
             loss = masked_context_token_loss + masked_column_token_loss
+
+            if self.config.predict_cell_tokens:
+                loss = loss + masked_cell_token_loss
 
             return loss
         else:
@@ -312,7 +337,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
         # (batch_size, max_column_num, hidden_size)
         mean_pooled_schema_encoding = last_table_encoding.sum(dim=1) / table_row_nums
 
-        return mean_pooled_context_encoding, mean_pooled_schema_encoding
+        return mean_pooled_context_encoding, mean_pooled_schema_encoding, last_table_encoding
 
     # noinspection PyUnboundLocalVariable
     def to_tensor_dict(

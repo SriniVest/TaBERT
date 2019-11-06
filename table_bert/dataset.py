@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import zmq
 from pytorch_pretrained_bert import BertTokenizer
+from table_bert.config import TableBertConfig
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
@@ -79,7 +80,9 @@ class DistributedSampler(Sampler):
 
 
 class TableDataset(Dataset):
-    def __init__(self, training_path, epoch=0, tokenizer=None, reduce_memory=False, multi_gpu=False, indices=None):
+    DEFAULT_CONFIG_CLS = TableBertConfig
+
+    def __init__(self, training_path, epoch=0, config=None, tokenizer=None, reduce_memory=False, multi_gpu=False, indices=None):
         # self.vocab = tokenizer.vocab
         # self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
@@ -91,6 +94,8 @@ class TableDataset(Dataset):
         dataset_size = metrics['num_training_examples']
 
         assert reduce_memory is False, 'reduce_memory is not implemented'
+
+        self.config = config or self.DEFAULT_CONFIG_CLS()
 
         if not indices:
             if multi_gpu:
@@ -123,8 +128,7 @@ class TableDataset(Dataset):
 
         self.examples = self.load_epoch(data_file_prefix, metrics['shard_num'], indices)
 
-    @staticmethod
-    def load_epoch(file_prefix: Path, shard_num: int, valid_indices: Set = None):
+    def load_epoch(self, file_prefix: Path, shard_num: int, valid_indices: Set = None):
         examples = []
         idx = -1
         for shard_id in range(shard_num):

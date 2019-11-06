@@ -1,5 +1,6 @@
 import math
 import random
+from itertools import chain
 from typing import List, Callable, Any, Dict
 
 from table_bert.config import TableBertConfig
@@ -10,8 +11,11 @@ from table_bert.table_bert import MAX_BERT_INPUT_LENGTH
 
 
 # noinspection PyMethodOverriding
+from table_bert.vertical.config import VerticalAttentionTableBertConfig
+
+
 class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
-    def __init__(self, config: TableBertConfig):
+    def __init__(self, config: VerticalAttentionTableBertConfig):
         super(VerticalAttentionTableBertInputFormatter, self).__init__(config)
 
         column_span_method = 'whole_span'
@@ -95,6 +99,10 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
 
         masked_column_token_indices_list = []
         masked_column_token_column_ids = []
+
+        masked_cell_token_indices_list = []
+        masked_cell_token_column_ids_list = []
+        masked_cell_token_labels_list = []
         for row_id, row_instance in enumerate(row_instances):
             maskable_column_token_indices = [
                 (
@@ -110,6 +118,24 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
                 for col_id in columns_to_mask
                 for token_idx in maskable_column_token_indices[col_id]
             ]
+
+            masked_cell_token_indices = [
+                range(*row_instance['column_spans'][col_id]['value'])
+                for col_id in columns_to_mask
+            ]
+
+            # masked_cell_token_column_ids = [
+            #     col_id
+            #     for col_id in columns_to_mask
+            #     for token_idx in masked_cell_token_indices[col_id]
+            # ]
+
+            masked_cell_token_indices = list(chain(*masked_cell_token_indices))
+            masked_cell_token_labels = [row_instance['tokens'][pos] for pos in masked_cell_token_indices]
+
+            masked_cell_token_indices_list.append(masked_cell_token_indices)
+            # masked_cell_token_column_ids_list.append(masked_cell_token_column_ids)
+            masked_cell_token_labels_list.append(masked_cell_token_labels)
 
             if row_id == 0:
                 masked_column_token_column_ids = [
@@ -179,7 +205,9 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
                     'token_ids': self.tokenizer.convert_tokens_to_ids(row_instance['tokens']),
                     'segment_a_length': row_instance['segment_a_length'],
                     'context_span': row_instance['context_span'],
-                    'column_token_position_to_column_ids': row_instance['column_token_position_to_column_ids']
+                    'column_token_position_to_column_ids': row_instance['column_token_position_to_column_ids'],
+                    'masked_cell_token_positions': masked_cell_token_indices_list[row_id] if self.config.predict_cell_tokens else None,
+                    'masked_cell_token_label_ids': self.tokenizer.convert_tokens_to_ids(masked_cell_token_labels_list[row_id]) if self.config.predict_cell_tokens else None
                 }
                 for row_id, row_instance
                 in enumerate(row_instances)

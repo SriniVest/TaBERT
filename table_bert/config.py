@@ -92,7 +92,7 @@ class TableBertConfig(SimpleNamespace):
         args = json.load(file_path.open())
         override_args = override_args or dict()
         args.update(override_args)
-        default_config = TableBertConfig()
+        default_config = cls()
         config_dict = {}
         for key, default_val in vars(default_config).items():
             val = args.get(key, default_val)

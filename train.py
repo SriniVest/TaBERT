@@ -136,10 +136,10 @@ def main():
     model.train()
 
     # we also partitation the dev set for every local process
-    print('loading dev set...')
+    logger.info('Loading dev set...')
     sys.stdout.flush()
     dataset_cls = task['dataset']
-    dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer,
+    dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer, config=table_bert_config,
                           multi_gpu=args.multi_gpu)
 
     logger.info("***** Running training *****")
@@ -157,8 +157,8 @@ def main():
         with torch.random.fork_rng(devices=None if args.cpu else [device.index]):
             torch.random.manual_seed(131 + epoch)
 
-            epoch_dataset = dataset_cls(epoch=trainer.epoch, training_path=train_data_dir, tokenizer=model_ptr.tokenizer,
-                                        multi_gpu=args.multi_gpu)
+            epoch_dataset = dataset_cls(epoch=trainer.epoch, training_path=train_data_dir, config=table_bert_config,
+                                        tokenizer=model_ptr.tokenizer, multi_gpu=args.multi_gpu)
             train_sampler = RandomSampler(epoch_dataset)
             train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=real_batch_size,
                                           num_workers=0,

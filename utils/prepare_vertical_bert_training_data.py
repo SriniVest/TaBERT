@@ -6,10 +6,11 @@ from utils.prepare_training_data import *
 
 
 def write_instance_to_file(
-        output_file: Path,
-        num_workers: int,
-        stat_send: connection.Connection,
-        shard_size: int = 3000000
+    output_file: Path,
+    num_workers: int,
+    stat_send: connection.Connection,
+    input_formatter: VerticalAttentionTableBertInputFormatter,
+    shard_size: int = 3000000
 ):
     context = zmq.Context()
     instance_receiver = context.socket(zmq.PULL)
@@ -50,7 +51,7 @@ def write_instance_to_file(
 
             table_data = []
             for row_inst in data['rows']:
-                row_data = serialize_row_data(row_inst)
+                row_data = serialize_row_data(row_inst, config=input_formatter.config)
                 table_data.extend(row_data)
 
             row_data_offsets.append([

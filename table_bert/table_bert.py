@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Union, Dict
 
@@ -60,7 +61,21 @@ class TableBertModel(nn.Module):
         else:
             state_dict = None
 
-        config = TableBertConfig.from_file(config_file, **override_config)
+        config_dict = json.load(open(config_file))
+
+        if cls == TableBertModel:
+            if 'num_vertical_attention_heads' in config_dict:
+                from table_bert.vertical.vertical_attention_table_bert import VerticalAttentionTableBert, VerticalAttentionTableBertConfig
+                table_bert_cls = VerticalAttentionTableBert
+                config_cls = VerticalAttentionTableBertConfig
+            else:
+                from table_bert.vanilla_table_bert import VanillaTableBert
+                table_bert_cls = VanillaTableBert
+                config_cls = TableBertConfig
+        else:
+            table_bert_cls = cls
+
+        config = config_cls.from_file(config_file, **override_config)
 
         # old table_bert format
         if not any(key.startswith('_bert_model') for key in state_dict):
@@ -68,9 +83,9 @@ class TableBertModel(nn.Module):
                 config.base_model_name,
                 state_dict=state_dict
             )
-            model = cls(config, bert_model=bert_model)
+            model = table_bert_cls(config, bert_model=bert_model)
         else:
-            model = cls(config)
+            model = table_bert_cls(config)
             model.load_state_dict(state_dict)
 
         return model

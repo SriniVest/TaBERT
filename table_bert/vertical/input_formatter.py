@@ -1,5 +1,6 @@
 import math
 import random
+import numpy as np
 from itertools import chain
 from typing import List, Callable, Any, Dict
 
@@ -29,18 +30,24 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
     def get_input(self, context: List[str], table: Table):
         row_instances = []
 
-        for row_data in table.data:
+        table_data = table.data[:self.config.sample_row_num]
+
+        for row_data in table_data:
+            if isinstance(row_data, dict):
+                row_data = [row_data[col.name] for col in table.header]
             row_instance = self.get_row_input(context, table.header, row_data)
             row_instances.append(row_instance)
 
-        return row_instances
+        return {
+            'rows': row_instances
+        }
 
     def get_row_input(self, context: List[str], header: List[Column], row_data: List[Any]):
         row_instance = super(VerticalAttentionTableBertInputFormatter, self).get_row_input(
             context, header, row_data=row_data)
 
         input_sequence_len = len(row_instance['tokens'])
-        column_token_position_to_column_ids = [-1] * input_sequence_len
+        column_token_position_to_column_ids = [np.iinfo(np.uint16).max] * input_sequence_len
 
         for col_id, column in enumerate(header):
             if col_id < len(row_instance['column_spans']):
@@ -92,7 +99,7 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
     def create_pretraining_instance(self, context: List[str], table: Table, example: Example):
         assert self.config.table_mask_strategy == 'column'
 
-        row_instances = self.get_input(context, table)
+        row_instances = self.get_input(context, table)['rows']
 
         num_maskable_columns = min(len(row_inst['column_spans']) for row_inst in row_instances)
         num_column_to_mask = max(1, math.ceil(num_maskable_columns * self.config.masked_column_prob))
@@ -212,7 +219,7 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
             "rows": [
                 {
                     'tokens': row_instance['tokens'],
-                    'token_ids': self.tokenizer.convert_tokens_to_ids(row_instance['tokens']),
+                    'token_ids': row_instance['token_ids'],
                     'segment_a_length': row_instance['segment_a_length'],
                     'context_span': row_instance['context_span'],
                     'column_token_position_to_column_ids': row_instance['column_token_position_to_column_ids'],

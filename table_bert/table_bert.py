@@ -86,6 +86,6 @@ class TableBertModel(nn.Module):
             model = table_bert_cls(config, bert_model=bert_model)
         else:
             model = table_bert_cls(config)
-            model.load_state_dict(state_dict)
+            model.load_state_dict(state_dict, strict=True)
 
         return model

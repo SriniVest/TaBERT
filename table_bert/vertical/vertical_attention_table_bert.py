@@ -1,6 +1,8 @@
 import gc
 import math
 import sys
+
+from table_bert.vertical.dataset import collate
 from tqdm import tqdm
 
 import numpy as np
@@ -346,89 +348,16 @@ class VerticalAttentionTableBert(VanillaTableBert):
         tables: List[Table],
         table_specific_tensors=True
     ):
-        instances = []
+        examples = []
         for e_id, (context, table) in enumerate(zip(contexts, tables)):
             instance = self.input_formatter.get_input(context, table)
-            instances.append(instance)
+            examples.append(instance)
 
         batch_size = len(contexts)
-        max_row_num = max(len(table.data) for table in tables)
-        max_column_num = max(len(table.header) for table in tables)
-        max_sequence_len = max(
-            len(row['tokens'])
-            for table_instance in instances
-            for row in table_instance
-        )
-        max_context_len = max(
-            row['context_length']
-            for table_instance in instances
-            for row in table_instance
-        )
 
-        # basic tensors
-        input_array = np.zeros((batch_size, max_row_num, max_sequence_len), dtype=np.int)
-        mask_array = np.zeros((batch_size, max_row_num, max_sequence_len), dtype=np.bool)
-        segment_array = np.zeros((batch_size, max_row_num, max_sequence_len), dtype=np.bool)
+        tensor_dict = collate(examples, config=self.config, train=False)
 
-        # table specific tensors
-        context_token_positions = np.zeros((batch_size, max_row_num, max_context_len), dtype=np.int)
-        context_token_mask = np.zeros((batch_size, max_row_num, max_context_len), dtype=np.bool)
-
-        # we initialize the mapping with the id of last column as the "garbage collection" entry for reduce ops
-        column_token_position_to_column_ids = np.zeros((batch_size, max_row_num, max_sequence_len), dtype=np.int)
-        column_token_position_to_column_ids.fill(max_column_num)
-        column_token_mask = np.zeros((batch_size, max_row_num, max_sequence_len), dtype=np.bool)
-
-        table_mask = np.zeros((batch_size, max_row_num, max_column_num), dtype=np.bool)
-
-        column_span = 'whole_span'
-        if 'column_name' in self.config.column_representation:
-            column_span = 'column_name'
-        elif 'first_token' in self.config.column_representation:
-            column_span = 'first_token'
-
-        for table_id, table_instance in enumerate(instances):
-            table = tables[table_id]
-            row_num = len(table_instance)
-            context_length = table_instance[0]['context_length']
-
-            context_token_positions[table_id, :row_num, :context_length] = table_instance[0]['context_token_indices']
-            context_token_mask[table_id, :row_num, :context_length] = 1.
-
-            for row_id, row_instance in enumerate(table_instance):
-                token_ids = self.tokenizer.convert_tokens_to_ids(row_instance['tokens'])
-                segment_ids = row_instance['segment_ids']
-
-                input_array[table_id, row_id, :len(token_ids)] = token_ids
-                segment_array[table_id, row_id, :len(segment_ids)] = segment_ids
-                mask_array[table_id, row_id, :len(token_ids)] = 1.
-
-                for col_id, column in enumerate(table.header):
-                    if column.name in row_instance['column_spans']:
-                        col_start, col_end = row_instance['column_spans'][column.name][column_span]
-
-                        column_token_position_to_column_ids[table_id, row_id, col_start: col_end] = col_id
-                        column_token_mask[table_id, row_id, col_start: col_end] = 1.
-                        table_mask[table_id, row_id, col_id] = 1.
-
-        tensor_dict = {
-            'input_ids': torch.tensor(input_array.astype(np.int64)),
-            'segment_ids': torch.tensor(segment_array.astype(np.int64)),
-            'sequence_mask': torch.tensor(mask_array, dtype=torch.float32),
-        }
-
-        tensor_dict.update({
-            'context_token_positions': torch.tensor(context_token_positions.astype(np.int64)),
-            'context_token_mask': torch.tensor(context_token_mask, dtype=torch.float32),
-            'column_token_position_to_column_ids': torch.tensor(column_token_position_to_column_ids.astype(np.int64)),
-            #'column_token_mask': torch.tensor(column_token_mask, dtype=torch.float32),
-            'table_mask': torch.tensor(table_mask, dtype=torch.float32)
-        })
-
-        # for instance in instances:
-        #     print(instance)
-
-        return tensor_dict, instances
+        return tensor_dict, examples
 
     def validate(self, data_loader):
         gc.collect()
@@ -454,3 +383,17 @@ class VerticalAttentionTableBert(VanillaTableBert):
         result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
 
         return result
+
+    def encode(self, contexts: List[List[str]], tables: List[Table]):
+        tensor_dict, instances = self.to_tensor_dict(contexts, tables)
+        context_encoding, schema_encoding = self.forward(**tensor_dict)
+
+        tensor_dict['context_token_mask'] = tensor_dict['context_token_mask'][:, 0, :]
+        tensor_dict['column_mask'] = tensor_dict['table_mask'][:, 0, :]
+
+        info = {
+            'tensor_dict': tensor_dict,
+            'instances': instances
+        }
+
+        return context_encoding, schema_encoding, info

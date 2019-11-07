@@ -386,6 +386,11 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
     def encode(self, contexts: List[List[str]], tables: List[Table]):
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
+        tensor_dict = {
+            k: v.to(self.device) if torch.is_tensor(v) else v
+            for k, v in tensor_dict.items()
+        }
+
         context_encoding, schema_encoding = self.forward(**tensor_dict)
 
         tensor_dict['context_token_mask'] = tensor_dict['context_token_mask'][:, 0, :]

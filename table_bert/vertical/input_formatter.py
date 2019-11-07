@@ -84,7 +84,8 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
                 table = Table(example.uuid, example.header, data=rows)
 
                 instance = self.create_pretraining_instance(context, table, example)
-                instances.append(instance)
+                if instance is not None:
+                    instances.append(instance)
 
         return instances
 
@@ -196,6 +197,15 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
             for row_id, row_instance in enumerate(row_instances):
                 token_idx = masked_token_indices_list[row_id][token_relative_idx]
                 row_instance['tokens'][token_idx] = masked_token
+
+        if (
+            self.config.predict_cell_tokens and
+            all(
+                len(masked_cell_token_indices_list[i]) == 0
+                for i in range(len(row_instances))
+            )
+        ):
+            return None
 
         info = {}
         pretrain_instance = {

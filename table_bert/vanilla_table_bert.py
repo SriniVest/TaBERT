@@ -13,6 +13,8 @@ from table_bert.input_formatter import VanillaTableBertInputFormatter
 
 
 class VanillaTableBert(TableBertModel):
+    CONFIG_CLASS = TableBertConfig
+
     def __init__(
         self,
         config: TableBertConfig,

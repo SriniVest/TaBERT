@@ -1,4 +1,5 @@
 import json
+import sys
 from argparse import ArgumentParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,7 +42,12 @@ class TableBertConfig(SimpleNamespace):
 
         # tokenizer = BertTokenizer.from_pretrained(self.base_model_name)
         if isinstance(cell_input_template, str):
-            cell_input_template = cell_input_template.split(' ')
+            if ' ' in cell_input_template:
+                cell_input_template = cell_input_template.split(' ')
+            else:
+                print(f'WARNING: cell_input_template is outdated: {cell_input_template}', file=sys.stderr)
+                cell_input_template = BertTokenizer.from_pretrained(self.base_model_name).tokenize(cell_input_template)
+
         self.cell_input_template = cell_input_template
 
         self.masked_context_prob = masked_context_prob

@@ -152,6 +152,8 @@ class SpanBasedPrediction(nn.Module):
 
 
 class VerticalAttentionTableBert(VanillaTableBert):
+    CONFIG_CLASS = VerticalAttentionTableBertConfig
+
     def __init__(
         self,
         config: VerticalAttentionTableBertConfig,

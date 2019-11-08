@@ -74,18 +74,20 @@ class TableBertModel(nn.Module):
                 config_cls = TableBertConfig
         else:
             table_bert_cls = cls
+            config_cls = table_bert_cls.CONFIG_CLASS
 
         config = config_cls.from_file(config_file, **override_config)
+        model = table_bert_cls(config)
 
         # old table_bert format
-        if not any(key.startswith('_bert_model') for key in state_dict):
-            bert_model = BertForMaskedLM.from_pretrained(
-                config.base_model_name,
-                state_dict=state_dict
-            )
-            model = table_bert_cls(config, bert_model=bert_model)
-        else:
-            model = table_bert_cls(config)
-            model.load_state_dict(state_dict, strict=True)
+        if state_dict is not None:
+            if not any(key.startswith('_bert_model') for key in state_dict):
+                bert_model = BertForMaskedLM.from_pretrained(
+                    config.base_model_name,
+                    state_dict=state_dict
+                )
+                model._bert_model = bert_model
+            else:
+                model.load_state_dict(state_dict, strict=True)
 
         return model

@@ -284,6 +284,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
                 cell_token_scores = self.span_based_prediction(masked_cell_representation, masked_cell_token_position_embedding)
                 # scalar
                 masked_cell_token_loss = loss_fct(cell_token_scores.view(-1, self.config.vocab_size), masked_cell_token_labels.view(-1))
+                masked_cell_token_num = masked_cell_token_labels.ne(-1).sum().item()
 
             # table schema MLM loss
             # (batch_size, masked_column_token_num, hidden_size)
@@ -297,13 +298,27 @@ class VerticalAttentionTableBert(VanillaTableBert):
             column_token_scores = self._bert_model.cls.predictions(column_token_span_representation)
 
             masked_context_token_loss = loss_fct(context_token_scores.view(-1, self.config.vocab_size), masked_context_token_labels.view(-1))
+            masked_context_token_num = masked_context_token_labels.ne(-1).sum().item()
+
             masked_column_token_loss = loss_fct(column_token_scores.view(-1, self.config.vocab_size), masked_column_token_labels.view(-1))
+            masked_column_token_num = masked_column_token_labels.ne(-1).sum().item()
+
             loss = masked_context_token_loss + masked_column_token_loss
+            logging_info = {
+                'sample_size': masked_context_token_num + masked_column_token_num,
+                'masked_context_token_ppl': math.exp(masked_context_token_loss.item() / masked_context_token_num),
+                'masked_column_token_ppl': math.exp(masked_column_token_loss.item() / masked_column_token_num)
+            }
 
             if self.config.predict_cell_tokens:
                 loss = loss + masked_cell_token_loss
 
-            return loss
+                logging_info['masked_cell_token_ppl'] = math.exp(masked_cell_token_loss.item() / masked_cell_token_num)
+                logging_info['sample_size'] += masked_cell_token_num
+
+            logging_info['ppl'] = math.exp(loss.item() / logging_info['sample_size'])
+
+            return loss, logging_info
         else:
             return context_encoding, schema_encoding
 

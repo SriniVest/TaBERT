@@ -124,15 +124,15 @@ class Trainer(object):
             with maybe_no_sync():
                 # forward and backward
                 sample_size = int(sample['sample_size'])
-                total_loss = self.model(**sample)
+                total_loss, logging_output = self.model(**sample)
 
                 avg_loss = total_loss / sample_size
                 self.optimizer.backward(avg_loss)
 
-                logging_output = {
-                    'sample_size': sample['sample_size'],
-                    'total_loss': total_loss.item()
-                }
+                # logging_output = {
+                #     'sample_size': sample['sample_size'],
+                #     'total_loss': total_loss.item()
+                # }
                 logging_outputs.append(logging_output)
 
         # gather logging outputs from all replicas
@@ -141,16 +141,21 @@ class Trainer(object):
         #     logging_outputs = list(chain.from_iterable(logging_outputs))
 
         # sample_size = sum(x['sample_size'] for x in logging_outputs)
-        logging_output = {
-            'sample_size': sum(x['sample_size'] for x in logging_outputs),
-            'total_loss': sum(x['total_loss'] for x in logging_outputs),
+        # logging_output = {
+        #     'sample_size': sum(x['sample_size'] for x in logging_outputs),
+        #     'total_loss': sum(x['total_loss'] for x in logging_outputs),
+        # }
+        # avg_loss = logging_output['total_loss'] / logging_output['sample_size']
+        # avg_ppl = math.exp(avg_loss)
+        # logging_output.update({
+        #     'avg_loss': avg_loss,
+        #     'avg_ppl': avg_ppl
+        # })
+
+        avg_logging_output = {
+            k: np.average([x[k] for x in logging_outputs])
+            for k in logging_outputs[0]
         }
-        avg_loss = logging_output['total_loss'] / logging_output['sample_size']
-        avg_ppl = math.exp(avg_loss)
-        logging_output.update({
-            'avg_loss': avg_loss,
-            'avg_ppl': avg_ppl
-        })
 
         if (
             0 < self.args.empty_cache_freq <= self._num_updates and
@@ -174,7 +179,7 @@ class Trainer(object):
             logging.error('| WARNING: overflow detected, ' + str(e))
             self.optimizer.zero_grad()
 
-        return logging_output
+        return avg_logging_output
 
     def take_one_step(self):
         self._num_updates += 1

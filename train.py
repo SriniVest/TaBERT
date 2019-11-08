@@ -171,7 +171,7 @@ def main():
         trainer.resume_batch_loader(samples_iter)
 
         with tqdm(total=len(samples_iter), initial=trainer.in_epoch_step,
-                  desc=f"Epoch {epoch}", file=sys.stdout, disable=not args.is_master) as pbar:
+                  desc=f"Epoch {epoch}", file=sys.stdout, disable=not args.is_master, miniters=100) as pbar:
 
             for samples in samples_iter:
                 logging_output = trainer.train_step(samples)

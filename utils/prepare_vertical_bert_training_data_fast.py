@@ -21,6 +21,8 @@ import zmq
 from pathlib import Path
 
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
+from table_bert.vertical.dataset import serialize_row_data
+from table_bert.vertical.input_formatter import VerticalAttentionTableBertInputFormatter
 from tqdm import tqdm, trange
 
 from random import shuffle, choice, sample, random
@@ -97,33 +99,27 @@ def generate_for_epoch(table_db: TableDatabase,
     if debug_file:
         f_dbg = open(debug_file, 'w')
 
-    sequences = []
-    segment_a_lengths = []
-    sequence_offsets = []
-    masked_lm_positions = []
-    masked_lm_label_ids = []
-    masked_lm_offsets = []
+    row_data_sequences = []
+    row_data_offsets = []
+    mlm_data_sequences = []
+    mlm_data_offsets = []
 
-    def _save():
+    def _save_shard():
         data = {
-            'sequences': np.uint16(sequences),
-            'segment_a_lengths': np.uint16(segment_a_lengths),
-            'sequence_offsets': np.int64(sequence_offsets),
-            'masked_lm_positions': np.uint16(masked_lm_positions),
-            'masked_lm_label_ids': np.uint16(masked_lm_label_ids),
-            'masked_lm_offsets': np.int64(masked_lm_offsets)
+            'row_data_sequences': np.uint16(row_data_sequences),
+            'row_data_offsets': np.uint64(row_data_offsets),
+            'mlm_data_sequences': np.uint16(mlm_data_sequences),
+            'mlm_data_offsets': np.uint64(mlm_data_offsets),
         }
 
         with h5py.File(str(epoch_file), 'w') as f:
             for key, val in data.items():
                 f.create_dataset(key, data=val)
 
-        del sequences[:]
-        del segment_a_lengths[:]
-        del sequence_offsets[:]
-        del masked_lm_positions[:]
-        del masked_lm_label_ids[:]
-        del masked_lm_offsets[:]
+        del row_data_sequences[:]
+        del row_data_offsets[:]
+        del mlm_data_sequences[:]
+        del mlm_data_offsets[:]
 
     for example_idx in tqdm(indices, desc=f"Generating dataset {epoch_file}", file=sys.stdout):
         example = table_db[example_idx]
@@ -136,17 +132,36 @@ def generate_for_epoch(table_db: TableDatabase,
 
                 input_formatter.remove_unecessary_instance_entries(instance)
 
-                cur_pos = len(sequences)
-                sequence_len = len(instance['token_ids'])
-                sequences.extend(instance['token_ids'])
-                segment_a_lengths.append(instance['segment_a_length'])
-                sequence_offsets.append([cur_pos, cur_pos + sequence_len])
+                table_data = []
+                for row_inst in instance['rows']:
+                    row_data = serialize_row_data(row_inst, config=input_formatter.config)
+                    table_data.extend(row_data)
 
-                cur_pos = len(masked_lm_positions)
-                lm_mask_len = len(instance['masked_lm_positions'])
-                masked_lm_positions.extend(instance['masked_lm_positions'])
-                masked_lm_label_ids.extend(instance['masked_lm_label_ids'])
-                masked_lm_offsets.append([cur_pos, cur_pos + lm_mask_len])
+                row_data_offsets.append([
+                    instance['table_size'][0],  # row_num
+                    instance['table_size'][1],  # column_num
+                    len(row_data_sequences),  # start index
+                    len(row_data_sequences) + len(table_data)  # end index
+                ])
+                row_data_sequences.extend(table_data)
+
+                s1 = len(mlm_data_sequences)
+                mlm_data = []
+
+                mlm_data.extend(instance['masked_context_token_positions'])
+                s2 = s1 + len(mlm_data)
+
+                mlm_data.extend(instance['masked_context_token_label_ids'])
+                s3 = s1 + len(mlm_data)
+
+                mlm_data.extend(instance['masked_column_token_column_ids'])
+                s4 = s1 + len(mlm_data)
+
+                mlm_data.extend(instance['masked_column_token_label_ids'])
+                s5 = s1 + len(mlm_data)
+
+                mlm_data_offsets.append([s1, s2, s3, s4, s5])
+                mlm_data_sequences.extend(mlm_data)
         except:
             # raise
             typ, value, tb = sys.exc_info()
@@ -158,7 +173,7 @@ def generate_for_epoch(table_db: TableDatabase,
 
             sys.stderr.flush()
 
-    _save()
+    _save_shard()
 
 
 def main():
@@ -179,9 +194,9 @@ def main():
     print(f'Rank {args.global_rank} out of {args.world_size}', file=sys.stderr)
     sys.stderr.flush()
 
-    table_bert_config = TableBertConfig.from_dict(vars(args))
-    input_formatter = VanillaTableBertInputFormatter(table_bert_config)
-    tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
+    table_bert_config = VerticalAttentionTableBertConfig.from_dict(vars(args))
+    input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config)
+    tokenizer = input_formatter.tokenizer
 
     total_tables_num = int(subprocess.check_output(f"wc -l {args.train_corpus}", shell=True).split()[0])
     dev_table_num = min(int(total_tables_num * 0.1), 100000)

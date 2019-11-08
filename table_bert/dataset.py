@@ -1,4 +1,6 @@
 import json
+import re
+
 import ujson
 import msgpack
 import logging
@@ -88,10 +90,13 @@ class TableDataset(Dataset):
         self.data_epoch = self.epoch = epoch
         # self.data_epoch = epoch % num_data_epochs
         data_file_prefix = training_path / f"epoch_{self.data_epoch}"
-        metrics_file = training_path / f"epoch_{self.data_epoch}.metrics.json"
-        assert metrics_file.is_file()
-        metrics = json.loads(metrics_file.read_text())
-        dataset_size = metrics['num_training_examples']
+        # metrics_file = training_path / f"epoch_{self.data_epoch}.metrics.json"
+        # assert metrics_file.is_file()
+        # metrics = json.loads(metrics_file.read_text())
+        # dataset_size = metrics['num_training_examples']
+
+        epoch_info = self.get_epoch_shards_info(data_file_prefix)
+        epoch_dataset_size = epoch_info['total_size']
 
         assert reduce_memory is False, 'reduce_memory is not implemented'
 
@@ -102,13 +107,13 @@ class TableDataset(Dataset):
                 num_shards = torch.distributed.get_world_size()
                 local_shard_id = torch.distributed.get_rank()
 
-                shard_size = dataset_size // num_shards
+                shard_size = epoch_dataset_size // num_shards
 
-                logging.info(f'dataset_size={dataset_size}, shard_size={shard_size}')
+                logging.info(f'dataset_size={epoch_dataset_size}, shard_size={shard_size}')
 
                 g = torch.Generator()
                 g.manual_seed(self.epoch)
-                indices = torch.randperm(dataset_size, generator=g).tolist()
+                indices = torch.randperm(epoch_dataset_size, generator=g).tolist()
 
                 # make it evenly divisible
                 indices = indices[:shard_size * num_shards]
@@ -126,7 +131,45 @@ class TableDataset(Dataset):
         if indices:
             logging.info(f'Load a sub-sample of the whole dataset')
 
-        self.examples = self.load_epoch(data_file_prefix, metrics['shard_num'], indices)
+        self.examples = self.load_epoch(data_file_prefix, epoch_info['shard_num'], indices)
+
+    @classmethod
+    def get_dataset_info(cls, data_path: Path, max_epoch=-1):
+        if max_epoch == -1:
+            epoch_files = list(data_path.glob('epoch_*'))
+            epoch_ids = [
+                int(re.search(r'epoch_(\d+)', str(f)).group(1))
+                for f in epoch_files
+            ]
+            max_epoch = max(epoch_ids) + 1
+
+        data_size = 0
+        for epoch_id in range(max_epoch):
+            epoch_file = data_path / f'epoch_{epoch_id}'
+            epoch_info = cls.get_epoch_shards_info(epoch_file)
+            data_size += epoch_info['total_size']
+
+        return {
+            'total_size': data_size,
+            'max_epoch': max_epoch
+        }
+
+    @classmethod
+    def get_epoch_shards_info(cls, shard_file_prefix: Path):
+        shard_files = list(shard_file_prefix.parent.glob(shard_file_prefix.name + '.shard*.h5'))
+        shard_ids = [int(re.search(r'shard(\d+)', str(f)).group(1)) for f in shard_files]
+        shard_num = max(shard_ids) + 1
+
+        cum_size = 0
+        for shard_file in shard_files:
+            print(shard_file)
+            shard_size = cls.get_shard_size(shard_file)
+            cum_size += shard_size
+
+        return {
+            'shard_num': shard_num,
+            'total_size': cum_size
+        }
 
     def load_epoch(self, file_prefix: Path, shard_num: int, valid_indices: Set = None):
         examples = []

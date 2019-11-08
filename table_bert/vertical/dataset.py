@@ -220,6 +220,13 @@ def serialize_row_data(example, config: VerticalAttentionTableBertConfig):
 class VerticalAttentionTableBertDataset(TableDataset):
     DEFAULT_CONFIG_CLS = VerticalAttentionTableBertConfig
 
+    @classmethod
+    def get_shard_size(cls, shard_file: Path):
+        with h5py.File(str(shard_file), 'r', rdcc_nbytes=1024 * 1024 * 2048) as data:
+            shard_size = data['mlm_data_offsets'].shape[0]
+
+        return shard_size
+
     def collate(self, examples):
         return collate(examples, self.config)
 

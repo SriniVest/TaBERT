@@ -66,13 +66,6 @@ def main():
     assert args.data_dir.is_dir(), \
         "--data_dir should point to the folder of files made by pregenerate_training_data.py!"
 
-    epoch_stat_files = list(train_data_dir.glob('epoch_*.metrics.json'))
-    epoch_ids = [
-        int(re.search(r'epoch_(\d+).metrics.json', str(f)).group(1))
-        for f in epoch_stat_files
-    ]
-    max_epoch = max(epoch_ids)
-
     if args.cpu:
         device = torch.device('cpu')
     else:
@@ -123,6 +116,17 @@ def main():
     else:
         model_ptr = model
 
+    # set up update parameters for LR scheduler
+    dataset_cls = task['dataset']
+
+    train_set_info = dataset_cls.get_dataset_info(train_data_dir, args.max_epoch)
+    total_num_updates = train_set_info['total_size'] // args.train_batch_size // args.world_size // args.gradient_accumulation_steps
+    args.max_epoch = train_set_info['max_epoch']
+    logger.info(f'Train data size: {train_set_info["total_size"]} for {args.max_epoch} epochs, total num. updates: {total_num_updates}')
+
+    args.total_num_update = total_num_updates
+    args.warmup_updates = int(total_num_updates * 0.1)
+
     trainer = Trainer(model, args)
 
     checkpoint_file = args.output_dir / 'model.ckpt.bin'
@@ -138,7 +142,6 @@ def main():
     # we also partitation the dev set for every local process
     logger.info('Loading dev set...')
     sys.stdout.flush()
-    dataset_cls = task['dataset']
     dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer, config=table_bert_config,
                           multi_gpu=args.multi_gpu)
 
@@ -151,7 +154,7 @@ def main():
                     f'global step {trainer.num_updates}')
 
     start_epoch = trainer.epoch
-    for epoch in range(start_epoch, max_epoch + 1):  # inclusive
+    for epoch in range(start_epoch, args.max_epoch):  # inclusive
         model.train()
 
         with torch.random.fork_rng(devices=None if args.cpu else [device.index]):

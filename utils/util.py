@@ -50,6 +50,7 @@ def parse_arg():
                         default=32,
                         type=int,
                         help="Total batch size for training.")
+    parser.add_argument("--max-epoch", default=-1, type=int)
     # parser.add_argument("--total-num-update", type=int, default=1000000, help="Number of steps to train for")
     parser.add_argument('--gradient-accumulation-steps',
                         type=int,

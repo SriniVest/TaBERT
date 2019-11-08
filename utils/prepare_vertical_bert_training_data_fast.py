@@ -168,13 +168,16 @@ def main():
     parser.add_argument("--epochs_to_generate", type=int, default=3,
                         help="Number of epochs of preprocess to pregenerate")
     parser.add_argument('--no_wiki_tables_from_common_crawl', action='store_true', default=False)
-    parser.add_argument('--global_rank', type=int, required=True)
-    parser.add_argument('--world_size', type=int, required=True)
+    parser.add_argument('--global_rank', type=int, default=os.environ.get('SLURM_PROCID', 0))
+    parser.add_argument('--world_size', type=int, default=os.environ.get('SLURM_NTASKS', 1))
 
     VerticalAttentionTableBertConfig.add_args(parser)
 
     args = parser.parse_args()
     args.is_master = args.global_rank == 0
+
+    print(f'Rank {args.global_rank} out of {args.world_size}', file=sys.stderr)
+    sys.stderr.flush()
 
     table_bert_config = TableBertConfig.from_dict(vars(args))
     input_formatter = VanillaTableBertInputFormatter(table_bert_config)

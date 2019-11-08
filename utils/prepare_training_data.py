@@ -99,7 +99,7 @@ def generate_train_instance_from_example(
     # instance_sender.setsockopt(zmq.LINGER, -1)
     instance_sender.connect(TRAIN_INSTANCE_QUEUE_ADDRESS)
 
-    table_db.restore_client()
+    table_db.restore_redis_client()
 
     if debug_file:
         f_dbg = open(debug_file, 'w')

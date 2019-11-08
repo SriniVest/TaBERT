@@ -306,12 +306,23 @@ class Example(object):
 
 
 class TableDatabase:
-    def __init__(self):
-        self.restore_client()
-        self.client.flushall(asynchronous=False)
+    def __init__(self, tokenizer, backend='redis', num_workers=None):
+        self.tokenizer = tokenizer
+        self.backend = backend
+
+        if self.backend == 'redis':
+            self.restore_redis_client()
+            self.client.flushall(asynchronous=False)
+
+        if num_workers is None:
+            num_workers = multiprocessing.cpu_count()
+            if num_workers > 20:
+                num_workers -= 2
+
+        self.num_workers = num_workers
         self._cur_index = multiprocessing.Value('i', 0)
 
-    def restore_client(self):
+    def restore_redis_client(self):
         self.client = redis.Redis(host='localhost', port=6379, db=0)
 
     @staticmethod
@@ -392,15 +403,9 @@ class TableDatabase:
                     # print(cnt)
                     example = Example.from_dict(ujson.loads(job), tokenizer, suffix=None)
 
-                    # TODO: move this to preprocess pre-processing
-                    if any(len(col.name.split(' ')) > 10 for col in example.header):
-                        continue
-
-                    if any(len(col.name_tokens) == 0 for col in example.header):
-                        continue
-
-                    data = example.serialize()
-                    buffer.append(msgpack.packb(data, use_bin_type=True))
+                    if TableDatabase.is_valid_example(example):
+                        data = example.serialize()
+                        buffer.append(msgpack.packb(data, use_bin_type=True))
 
                     if len(buffer) >= buffer_size:
                         _add_to_cache()
@@ -430,18 +435,51 @@ class TableDatabase:
         context.destroy()
 
     @classmethod
-    def from_jsonl(cls, file_path: Path, tokenizer: Optional[BertTokenizer] = None) -> 'TableDatabase':
+    def from_jsonl(
+        cls,
+        file_path: Path,
+        tokenizer: Optional[BertTokenizer] = None,
+        backend='redis',
+        num_workers=None,
+        indices=None
+    ) -> 'TableDatabase':
         file_path = Path(file_path)
-        db = cls()
-        num_workers = multiprocessing.cpu_count() - 5
 
-        reader = multiprocessing.Process(target=cls.__load_process_zmq, args=(file_path, num_workers),
+        db = cls(backend=backend, num_workers=num_workers, tokenizer=tokenizer)
+
+        if backend == 'redis':
+            assert indices is None
+            db.load_data_to_redis(file_path)
+        elif backend == 'memory':
+            example_store = dict()
+            if indices: indices = set(indices)
+
+            with file_path.open() as f:
+                for idx, json_line in enumerate(tqdm(f, desc=f'Loading Tables from {str(file_path)}', unit='entries', file=sys.stdout)):
+                    if indices and idx not in indices:
+                        continue
+
+                    example = Example.from_dict(
+                        ujson.loads(json_line),
+                        tokenizer,
+                        suffix=None
+                    )
+
+                    if TableDatabase.is_valid_example(example):
+                        example_store[idx] = example
+                        
+            db.__example_store = example_store
+
+        return db
+
+    def load_data_to_redis(self, file_path: Path):
+        reader = multiprocessing.Process(target=self.__load_process_zmq, args=(file_path, self.num_workers),
                                          daemon=True)
 
         workers = []
-        for _ in range(num_workers):
-            worker = multiprocessing.Process(target=cls.__example_worker_process_zmq,
-                                             args=(tokenizer, db),
+        for _ in range(self.num_workers):
+            worker = multiprocessing.Process(target=self.__example_worker_process_zmq,
+                                             args=(self.tokenizer, self),
                                              daemon=True)
             worker.start()
             workers.append(worker)
@@ -455,7 +493,7 @@ class TableDatabase:
         db_size = 0
         with tqdm(desc=f"Loading Tables from {str(file_path)}", unit=" entries", file=sys.stdout) as pbar:
             while True:
-                cur_db_size = len(db)
+                cur_db_size = len(self)
                 pbar.update(cur_db_size - db_size)
                 db_size = cur_db_size
 
@@ -470,27 +508,55 @@ class TableDatabase:
             worker.join()
         reader.terminate()
 
-        return db
-
     def __len__(self):
-        return self._cur_index.value
+        if self.backend == 'redis':
+            return self._cur_index.value
+        elif self.backend == 'memory':
+            return len(self.__example_store)
+        else:
+            raise RuntimeError()
+
+    def __contains__(self, item):
+        assert self.backend == 'memory'
+        return item in self.__example_store
 
     def __getitem__(self, item) -> Example:
-        result = self.client.get(str(item))
-        if result is None:
-            raise IndexError(item)
-
-        example = Example.from_serialized(msgpack.unpackb(result, raw=False))
+        if self.backend == 'redis':
+            result = self.client.get(str(item))
+            if result is None:
+                raise IndexError(item)
+    
+            example = Example.from_serialized(msgpack.unpackb(result, raw=False))
+        elif self.backend == 'memory':
+            example = self.__example_store[item]
+        else:
+            raise RuntimeError()
 
         return example
 
     def __iter__(self) -> Iterator[Example]:
-        for i in range(len(self)):
-            yield self[i]
+        if self.backend == 'redis':
+            for i in range(len(self)):
+                yield self[i]
+        else:
+            for example in self.__example_store.items():
+                yield example
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, traceback):
-        print('Flushing all entries in cache')
-        self.client.flushall()
+        if self.backend == 'redis':
+            print('Flushing all entries in cache')
+            self.client.flushall()
+
+    @classmethod
+    def is_valid_example(cls, example):
+        # TODO: move this to preprocess pre-processing
+        if any(len(col.name.split(' ')) > 10 for col in example.header):
+            return False
+
+        if any(len(col.name_tokens) == 0 for col in example.header):
+            return False
+
+        return True

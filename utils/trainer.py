@@ -187,7 +187,7 @@ class Trainer(object):
         self.lr_scheduler.step_update(self._num_updates)
         if self._num_updates >= self.lr_scheduler.total_num_update:
             logging.warning('Reached max num of updates')
-            exit(0)
+            # exit(0)
 
     def validate(self, dataset):
         def collate_fn(x):

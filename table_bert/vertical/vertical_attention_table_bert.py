@@ -403,6 +403,12 @@ class VerticalAttentionTableBert(VanillaTableBert):
             'masked_column_token_num'
         ]
 
+        if self.config.predict_cell_tokens:
+            keys += [
+                'masked_cell_token_loss',
+                'masked_cell_token_num'
+            ]
+
         was_training = self.training
         self.eval()
 
@@ -418,12 +424,6 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         if was_training:
             self.train()
-
-        if self.config.predict_cell_tokens:
-            keys += [
-                'masked_cell_token_loss',
-                'masked_cell_token_num'
-            ]
 
         stats = {
             k: sum(x[k] for x in logging_info_list)

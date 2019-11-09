@@ -2,6 +2,7 @@ import gc
 import math
 import sys
 
+from fairseq import distributed_utils
 from table_bert.vertical.dataset import collate
 from tqdm import tqdm
 
@@ -304,16 +305,32 @@ class VerticalAttentionTableBert(VanillaTableBert):
             masked_column_token_num = masked_column_token_labels.ne(-1).sum().item()
 
             loss = masked_context_token_loss + masked_column_token_loss
+
+            masked_context_token_loss = masked_context_token_loss.item()
+            masked_context_token_ppl = math.exp(masked_context_token_loss / masked_context_token_num)
+            masked_column_token_loss = masked_column_token_loss.item()
+            masked_column_token_ppl = math.exp(masked_column_token_loss / masked_column_token_num)
+
             logging_info = {
                 'sample_size': masked_context_token_num + masked_column_token_num,
-                'masked_context_token_ppl': math.exp(masked_context_token_loss.item() / masked_context_token_num),
-                'masked_column_token_ppl': math.exp(masked_column_token_loss.item() / masked_column_token_num)
+                'masked_context_token_loss': masked_context_token_loss,
+                'masked_context_token_num': masked_context_token_num,
+                'masked_context_token_ppl': masked_context_token_ppl,
+                'masked_column_token_loss': masked_column_token_loss,
+                'masked_column_token_num': masked_column_token_num,
+                'masked_column_token_ppl': masked_column_token_ppl,
             }
 
             if self.config.predict_cell_tokens:
                 loss = loss + masked_cell_token_loss
 
-                logging_info['masked_cell_token_ppl'] = math.exp(masked_cell_token_loss.item() / masked_cell_token_num)
+                masked_cell_token_loss = masked_cell_token_loss.item()
+                masked_cell_token_ppl = math.exp(masked_cell_token_loss / masked_cell_token_num)
+
+                logging_info['masked_cell_token_loss'] = masked_cell_token_loss
+                logging_info['masked_cell_token_num'] = masked_cell_token_num
+                logging_info['masked_cell_token_ppl'] = masked_cell_token_ppl
+
                 logging_info['sample_size'] += masked_cell_token_num
 
             logging_info['ppl'] = math.exp(loss.item() / logging_info['sample_size'])
@@ -379,27 +396,57 @@ class VerticalAttentionTableBert(VanillaTableBert):
     def validate(self, data_loader):
         gc.collect()
 
+        keys = [
+            'masked_context_token_loss',
+            'masked_context_token_num',
+            'masked_column_token_loss',
+            'masked_column_token_num'
+        ]
+
         was_training = self.training
         self.eval()
 
-        cum_loss = num_slots = 0.
+        logging_info_list = []
         with torch.no_grad():
             with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
                 for step, batch in enumerate(data_loader):
-                    loss_sum = self(**batch)
-
-                    cum_loss += loss_sum.item()
-                    num_slots += float(batch['sample_size'])
+                    loss_sum, logging_info = self(**batch)
+                    logging_info = {k: logging_info[k] for k in keys}
+                    logging_info_list.append(logging_info)
 
                     pbar.update(1)
 
         if was_training:
             self.train()
 
-        ppl = math.exp(cum_loss / num_slots)
-        result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
+        if self.config.predict_cell_tokens:
+            keys += [
+                'masked_cell_token_loss',
+                'masked_cell_token_num'
+            ]
 
-        return result
+        stats = {
+            k: sum(x[k] for x in logging_info_list)
+            for k in keys
+        }
+
+        # handel distributed evaluation
+        if self.args.multi_gpu:
+            stats = distributed_utils.all_gather_list(stats)
+            stats = {
+                k: sum(x[k] for x in stats)
+                for k in keys
+            }
+
+        valid_result = {
+            'masked_context_token_ppl': math.exp(stats['masked_context_token_loss'] / stats['masked_context_token_num']),
+            'masked_column_token_ppl': math.exp(stats['masked_column_token_loss'] / stats['masked_column_token_num'])
+        }
+
+        if self.config.predict_cell_tokens:
+            valid_result['masked_cell_token_ppl'] = math.exp(stats['masked_cell_token_loss'] / stats['masked_cell_token_num'])
+
+        return valid_result
 
     def encode(self, contexts: List[List[str]], tables: List[Table]):
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)

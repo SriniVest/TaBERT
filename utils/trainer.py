@@ -203,15 +203,6 @@ class Trainer(object):
 
         valid_result = model.validate(data_loader)
 
-        # handel distributed evaluation
-        if self.args.multi_gpu:
-            valid_result_list = distributed_utils.all_gather_list(valid_result)
-
-            cum_loss = sum(x['cum_loss'] for x in valid_result_list)
-            num_slots = sum(x['num_slots'] for x in valid_result_list)
-            ppl = math.exp(cum_loss / num_slots)
-            valid_result = {'ppl': ppl, 'cum_loss': cum_loss, 'num_slots': num_slots}
-
         return valid_result
 
     def save_checkpoint(self, ckpt_file: Path):

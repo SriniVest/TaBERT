@@ -201,7 +201,7 @@ class Trainer(object):
 
         model = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
 
-        valid_result = model.validate(data_loader)
+        valid_result = model.validate(data_loader, self.args)
 
         return valid_result
 

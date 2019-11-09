@@ -393,7 +393,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         return tensor_dict, examples
 
-    def validate(self, data_loader):
+    def validate(self, data_loader, args):
         gc.collect()
 
         keys = [
@@ -431,7 +431,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
         }
 
         # handel distributed evaluation
-        if self.args.multi_gpu:
+        if args.multi_gpu:
             stats = distributed_utils.all_gather_list(stats)
             stats = {
                 k: sum(x[k] for x in stats)

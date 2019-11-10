@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 from pytorch_pretrained_bert import BertForMaskedLM
 
-from table_bert.config import TableBertConfig
+from table_bert.config import TableBertConfig, BERT_CONFIGS
 
 
 class VerticalAttentionTableBertConfig(TableBertConfig):
@@ -15,7 +15,7 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         self.table_mask_strategy = kwargs.get('table_mask_strategy', 'column')
         self.predict_cell_tokens = kwargs.get('predict_cell_tokens', False)
 
-        bert_config = BertForMaskedLM.from_pretrained(self.base_model_name).config
+        bert_config = BERT_CONFIGS[self.base_model_name]
         for k, v in vars(bert_config).items():
             setattr(self, k, v)
 

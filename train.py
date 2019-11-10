@@ -1,12 +1,17 @@
 import re
 import sys
+from argparse import ArgumentParser
 from pathlib import Path
 
 import torch
 import random
 
 import torch.nn as nn
+import torch.distributed
 from fairseq.data import GroupedIterator
+from fairseq.optim.adam import FairseqAdam
+from fairseq.optim.lr_scheduler.polynomial_decay_schedule import PolynomialDecaySchedule
+from fairseq.options import eval_str_list
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
@@ -22,10 +27,10 @@ from table_bert.config import TableBertConfig
 from table_bert.dataset import TableDataset
 from utils.evaluator import Evaluator
 from utils.trainer import Trainer
-from utils.util import parse_arg, init_logger
+from utils.util import init_logger
 
 
-tasks = {
+task_dict = {
     'vanilla': {
         'dataset': TableDataset,
         'config': TableBertConfig,
@@ -39,9 +44,93 @@ tasks = {
 }
 
 
+def parse_train_arg():
+    parser = ArgumentParser()
+    parser.add_argument('--task',
+                        type=str,
+                        default='vanilla',
+                        choices=['vanilla', 'vertical_attention'])
+    parser.add_argument('--seed',
+                        type=int,
+                        default=42,
+                        help="random seed for initialization")
+    parser.add_argument("--cpu",
+                        action='store_true',
+                        help="Whether not to use CUDA when available")
+
+    parser.add_argument('--data-dir', type=Path, required=True)
+    parser.add_argument('--output-dir', type=Path, required=True)
+
+    parser.add_argument("--base-model-name", type=str, required=False,
+                        help="Bert pre-trained table_bert selected in the list: bert-base-uncased, "
+                             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+                        default='bert-base-uncased')
+    parser.add_argument('--no-init', action='store_true', default=False)
+    # parser.add_argument('--config-file', type=Path, help='table_bert config file if do not use pre-trained BERT table_bert.')
+
+    # distributed training
+    parser.add_argument("--ddp-backend", type=str, default='pytorch', choices=['pytorch', 'apex'])
+    parser.add_argument("--local_rank", "--local-rank",
+                        type=int,
+                        default=-1,
+                        help="local_rank for distributed training on gpus")
+    parser.add_argument("--master-port", type=int, default=-1,
+                        help="Master port (for multi-node SLURM jobs)")
+    parser.add_argument("--debug-slurm", action='store_true',
+                        help="Debug multi-GPU / multi-node within a SLURM job")
+
+    # training details
+    parser.add_argument("--train-batch-size",
+                        default=32,
+                        type=int,
+                        help="Total batch size for training.")
+    parser.add_argument("--max-epoch", default=-1, type=int)
+    # parser.add_argument("--total-num-update", type=int, default=1000000, help="Number of steps to train for")
+    parser.add_argument('--gradient-accumulation-steps',
+                        type=int,
+                        default=1,
+                        help="Number of updates steps to accumulate before performing a backward/update pass.")
+    parser.add_argument("--lr-scheduler", type=str, default='polynomial_decay', help='Learning rate scheduler')
+    parser.add_argument("--optimizer", type=str, default='adam', help='Optimizer to use')
+    parser.add_argument('--lr', '--learning-rate', default='0.00005', type=eval_str_list,
+                        metavar='LR_1,LR_2,...,LR_N',
+                        help='learning rate for the first N epochs; all epochs >N using LR_N'
+                             ' (note: this may be interpreted differently depending on --lr-scheduler)')
+    parser.add_argument('--clip-norm', default=0., type=float, help='clip gradient')
+    parser.add_argument('--empty-cache-freq', default=0, type=int,
+                        help='how often to clear the PyTorch CUDA cache (0 to disable)')
+    parser.add_argument('--save-checkpoint-every-niter', default=10000, type=int)
+
+    FairseqAdam.add_args(parser)
+    PolynomialDecaySchedule.add_args(parser)
+
+    # FP16 training
+    parser.add_argument('--fp16',
+                        action='store_true',
+                        help="Whether to use 16-bit float precision instead of 32-bit")
+    parser.add_argument('--memory-efficient-fp16',
+                        action='store_true',
+                        help='Use memory efficient fp16')
+    parser.add_argument('--threshold-loss-scale', type=float, default=None)
+    parser.add_argument('--fp16-init-scale', type=float, default=128)
+    # parser.add_argument('--fp16-scale-window', type=int, default=0)
+    parser.add_argument('--fp16-scale-tolerance', type=float, default=0.0)
+    parser.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
+                        help='minimum FP16 loss scale, after which training is stopped')
+
+    args, _ = parser.parse_known_args()
+
+    model_cls = task_dict[args.task]['model']
+    if hasattr(model_cls, 'add_args'):
+        model_cls.add_args(parser)
+        args = parser.parse_args()
+
+    return args
+
+
 def main():
-    args = parse_arg()
-    task = tasks[args.task]
+    args = parse_train_arg()
+    task = task_dict[args.task]
 
     init_distributed_mode(args)
     logger = init_logger(args)
@@ -91,11 +180,17 @@ def main():
         logger.warning(f"Output directory ({args.output_dir}) already exists and is not empty!")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prepare table_bert
+    # Prepare model
+    if args.multi_gpu and args.global_rank != 0:
+        torch.distributed.barrier()
+
     if args.no_init:
         raise NotImplementedError
     else:
         model = task['model'](table_bert_config)
+
+    if args.multi_gpu and args.global_rank == 0:
+        torch.distributed.barrier()
 
     if args.fp16:
         model = model.half()

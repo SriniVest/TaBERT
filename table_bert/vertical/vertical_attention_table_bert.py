@@ -163,7 +163,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
     ):
         super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
 
-        self.input_formatter = VerticalAttentionTableBertInputFormatter(self.config)
+        self.input_formatter = VerticalAttentionTableBertInputFormatter(self.config, self.tokenizer)
 
         if config.predict_cell_tokens:
             self.span_based_prediction = SpanBasedPrediction(config, self._bert_model.cls.predictions)

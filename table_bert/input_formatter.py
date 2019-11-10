@@ -11,10 +11,9 @@ from table_bert.table import Column, Table
 
 
 class TableBertBertInputFormatter(object):
-    def __init__(self, config: TableBertConfig):
+    def __init__(self, config: TableBertConfig, tokenizer: BertTokenizer):
         self.config = config
-        self.tokenizer = BertTokenizer.from_pretrained(
-            config.base_model_name, do_lower_case=config.do_lower_case)
+        self.tokenizer = tokenizer
 
         self.vocab_list = list(self.tokenizer.vocab.keys())
 

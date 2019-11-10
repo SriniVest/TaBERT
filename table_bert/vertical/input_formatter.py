@@ -4,6 +4,7 @@ import numpy as np
 from itertools import chain
 from typing import List, Callable, Any, Dict
 
+from pytorch_pretrained_bert import BertTokenizer
 from table_bert.config import TableBertConfig
 from table_bert.dataset import Example
 from table_bert.input_formatter import TableBertBertInputFormatter, VanillaTableBertInputFormatter
@@ -16,8 +17,8 @@ from table_bert.vertical.config import VerticalAttentionTableBertConfig
 
 
 class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
-    def __init__(self, config: VerticalAttentionTableBertConfig):
-        super(VerticalAttentionTableBertInputFormatter, self).__init__(config)
+    def __init__(self, config: VerticalAttentionTableBertConfig, tokenizer: BertTokenizer):
+        super(VerticalAttentionTableBertInputFormatter, self).__init__(config, tokenizer)
 
         column_span_method = 'whole_span'
         if 'column_name' in self.config.column_representation:

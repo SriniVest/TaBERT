@@ -84,7 +84,7 @@ class DistributedSampler(Sampler):
 class TableDataset(Dataset):
     DEFAULT_CONFIG_CLS = TableBertConfig
 
-    def __init__(self, training_path, epoch=0, config=None, tokenizer=None, reduce_memory=False, multi_gpu=False, indices=None):
+    def __init__(self, training_path, epoch=0, config=None, tokenizer=None, reduce_memory=False, multi_gpu=False, indices=None, debug=False):
         # self.vocab = tokenizer.vocab
         # self.tokenizer = tokenizer
         self.data_epoch = self.epoch = epoch
@@ -124,8 +124,12 @@ class TableDataset(Dataset):
                 assert len(indices) == shard_size
 
                 indices = set(indices)
-        else:
-            indices = set(indices)
+            else:
+                indices = set(range(epoch_dataset_size))
+
+        indices = set(indices)
+        if debug:
+            indices = set(list(indices)[:1000])
 
         logging.info(f"Loading examples from {training_path} for epoch {epoch}")
         if indices:

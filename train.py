@@ -118,6 +118,8 @@ def parse_train_arg():
     parser.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
                         help='minimum FP16 loss scale, after which training is stopped')
 
+    parser.add_argument('--debug-dataset', default=False, action='store_true')
+
     args, _ = parser.parse_known_args()
 
     model_cls = task_dict[args.task]['model']
@@ -238,7 +240,7 @@ def main():
     logger.info('Loading dev set...')
     sys.stdout.flush()
     dev_set = dataset_cls(epoch=0, training_path=dev_data_dir, tokenizer=model_ptr.tokenizer, config=table_bert_config,
-                          multi_gpu=args.multi_gpu)
+                          multi_gpu=args.multi_gpu, debug=args.debug_dataset)
 
     logger.info("***** Running training *****")
     logger.info(f"  Current config: {args}")
@@ -256,7 +258,7 @@ def main():
             torch.random.manual_seed(131 + epoch)
 
             epoch_dataset = dataset_cls(epoch=trainer.epoch, training_path=train_data_dir, config=table_bert_config,
-                                        tokenizer=model_ptr.tokenizer, multi_gpu=args.multi_gpu)
+                                        tokenizer=model_ptr.tokenizer, multi_gpu=args.multi_gpu, debug=args.debug_dataset)
             train_sampler = RandomSampler(epoch_dataset)
             train_dataloader = DataLoader(epoch_dataset, sampler=train_sampler, batch_size=real_batch_size,
                                           num_workers=0,

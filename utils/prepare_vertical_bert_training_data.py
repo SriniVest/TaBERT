@@ -113,8 +113,8 @@ def main():
     args = parser.parse_args()
 
     table_bert_config = VerticalAttentionTableBertConfig.from_dict(vars(args))
-    input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config)
-    tokenizer = input_formatter.tokenizer
+    tokenizer = BertTokenizer.from_pretrained(table_bert_config.base_model_name)
+    input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config, tokenizer)
 
     init_redis()
 

@@ -111,7 +111,7 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
         instance = {
             'tokens': sequence,
-            'token_ids': self.tokenizer.convert_tokens_to_ids(sequence),
+            #'token_ids': self.tokenizer.convert_tokens_to_ids(sequence),
             'segment_a_length': segment_a_length,
             # 'segment_ids': segment_ids,
             'column_spans': column_token_span_maps,

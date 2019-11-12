@@ -220,7 +220,7 @@ class VerticalAttentionTableBertInputFormatter(VanillaTableBertInputFormatter):
             "rows": [
                 {
                     'tokens': row_instance['tokens'],
-                    'token_ids': row_instance['token_ids'],
+                    'token_ids': self.tokenizer.convert_tokens_to_ids(row_instance['tokens']),
                     'segment_a_length': row_instance['segment_a_length'],
                     'context_span': row_instance['context_span'],
                     'column_token_position_to_column_ids': row_instance['column_token_position_to_column_ids'],

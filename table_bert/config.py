@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 from argparse import ArgumentParser
@@ -159,3 +160,6 @@ class TableBertConfig(SimpleNamespace):
 
     def save(self, file_path: Path):
         json.dump(vars(self), file_path.open('w'), indent=2, sort_keys=True, default=str)
+
+    def to_log_string(self):
+        return json.dumps(vars(self), indent=2, sort_keys=True, default=str)

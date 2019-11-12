@@ -61,10 +61,11 @@ def parse_train_arg():
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
 
-    parser.add_argument("--base-model-name", type=str, required=False,
-                        help="Bert pre-trained table_bert selected in the list: bert-base-uncased, "
-                             "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
-                        default='bert-base-uncased')
+    # parser.add_argument("--base-model-name", type=str, required=False,
+    #                     help="Bert pre-trained table_bert selected in the list: bert-base-uncased, "
+    #                          "bert-large-uncased, bert-base-cased, bert-base-multilingual, bert-base-chinese.",
+    #                     default='bert-base-uncased')
+    parser.add_argument("--table-bert-extra-config", type=json.loads, default='{}')
     parser.add_argument('--no-init', action='store_true', default=False)
     # parser.add_argument('--config-file', type=Path, help='table_bert config file if do not use pre-trained BERT table_bert.')
 
@@ -120,7 +121,7 @@ def parse_train_arg():
 
     parser.add_argument('--debug-dataset', default=False, action='store_true')
 
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
 
     model_cls = task_dict[args.task]['model']
     if hasattr(model_cls, 'add_args'):
@@ -142,12 +143,14 @@ def main():
     train_data_dir = args.data_dir / 'train'
     dev_data_dir = args.data_dir / 'dev'
     table_bert_config = task['config'].from_file(
-        args.data_dir / 'config.json', base_model_name=args.base_model_name)
+        args.data_dir / 'config.json', **args.table_bert_extra_config)
 
     if args.is_master:
         args.output_dir.mkdir(exist_ok=True, parents=True)
         with (args.output_dir / 'train_config.json').open('w') as f:
             json.dump(vars(args), f, indent=2, sort_keys=True, default=str)
+
+        logger.info(f'Table Bert Config: {table_bert_config.to_log_string()}')
 
         # copy the table bert config file to the working directory
         # shutil.copy(args.data_dir / 'config.json', args.output_dir / 'tb_config.json')

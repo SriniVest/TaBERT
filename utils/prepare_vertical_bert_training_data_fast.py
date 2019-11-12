@@ -4,6 +4,7 @@ import subprocess
 import time
 import traceback
 from argparse import ArgumentParser, Namespace
+import logging
 from multiprocessing import connection
 from typing import List, Iterator, Callable
 
@@ -191,28 +192,37 @@ def main():
     args = parser.parse_args()
     args.is_master = args.global_rank == 0
 
-    print(f'Rank {args.global_rank} out of {args.world_size}', file=sys.stderr)
+    logger = logging.getLogger('DataGenerator')
+    handler = logging.StreamHandler(sys.stderr)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+    logger.info(f'Rank {args.global_rank} out of {args.world_size}')
     sys.stderr.flush()
 
     table_bert_config = VerticalAttentionTableBertConfig.from_dict(vars(args))
-    input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config)
-    tokenizer = input_formatter.tokenizer
+    tokenizer = BertTokenizer.from_pretrained(table_bert_config.base_model_name)
+    input_formatter = VerticalAttentionTableBertInputFormatter(table_bert_config, tokenizer)
 
     total_tables_num = int(subprocess.check_output(f"wc -l {args.train_corpus}", shell=True).split()[0])
     dev_table_num = min(int(total_tables_num * 0.1), 100000)
     train_table_num = total_tables_num - dev_table_num
 
     # seed the RNG to make sure each process follows the same spliting
-    np.random.seed(1992)
+    rng = np.random.RandomState(seed=5783287)
 
     corpus_table_indices = list(range(total_tables_num))
-    np.random.shuffle(corpus_table_indices)
+    rng.shuffle(corpus_table_indices)
     dev_table_indices = corpus_table_indices[:dev_table_num]
     train_table_indices = corpus_table_indices[dev_table_num:]
 
     local_dev_table_indices = dev_table_indices[args.global_rank::args.world_size]
     local_train_table_indices = train_table_indices[args.global_rank::args.world_size]
     local_indices = local_dev_table_indices + local_train_table_indices
+
+    logger.info(f'total tables: {total_tables_num}')
+    logger.debug(f'local dev table indices: {local_dev_table_indices[:1000]}')
+    logger.debug(f'local train table indices: {local_train_table_indices[:1000]}')
 
     with TableDatabase.from_jsonl(args.train_corpus, backend='memory', tokenizer=tokenizer, indices=local_indices) as table_db:
         local_indices = {idx for idx in local_indices if idx in table_db}

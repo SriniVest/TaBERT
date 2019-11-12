@@ -586,7 +586,7 @@ class TableDatabase:
             for i in range(len(self)):
                 yield self[i]
         else:
-            for example in self.__example_store.items():
+            for example in self.__example_store.values():
                 yield example
 
     def __enter__(self):

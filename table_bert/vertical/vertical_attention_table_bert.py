@@ -385,6 +385,11 @@ class VerticalAttentionTableBert(VanillaTableBert):
         examples = []
         for e_id, (context, table) in enumerate(zip(contexts, tables)):
             instance = self.input_formatter.get_input(context, table)
+
+            for row_inst in instance['rows']:
+                row_inst['token_ids'] = self.tokenizer.convert_tokens_to_ids(row_inst['tokens'])
+
+
             examples.append(instance)
 
         batch_size = len(contexts)

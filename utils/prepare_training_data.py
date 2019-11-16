@@ -152,6 +152,7 @@ def write_instance_to_file(
         output_file: Path,
         num_workers: int,
         stat_send: connection.Connection,
+        input_formatter: VanillaTableBertInputFormatter,
         shard_size: int = 3000000
 ):
     context = zmq.Context()
@@ -328,8 +329,8 @@ def main():
     init_redis()
 
     table_bert_config = TableBertConfig.from_dict(vars(args))
-    input_formatter = VanillaTableBertInputFormatter(table_bert_config)
     tokenizer = BertTokenizer.from_pretrained(args.base_model_name, do_lower_case=args.do_lower_case)
+    input_formatter = VanillaTableBertInputFormatter(table_bert_config, tokenizer)
 
     with TableDatabase.from_jsonl(args.train_corpus, tokenizer=tokenizer) as table_db:
         args.output_dir.mkdir(exist_ok=True, parents=True)

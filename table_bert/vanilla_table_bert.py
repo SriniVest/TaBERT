@@ -1,5 +1,9 @@
+import math
+import sys
 from typing import List, Any
 import numpy as np
+from fairseq import distributed_utils
+from tqdm import tqdm
 
 import torch
 from pytorch_pretrained_bert import BertForPreTraining
@@ -22,7 +26,7 @@ class VanillaTableBert(TableBertModel):
         **kwargs
     ):
         super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
-        self.input_formatter = VanillaTableBertInputFormatter(self.config)
+        self.input_formatter = VanillaTableBertInputFormatter(self.config, self.tokenizer)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, **kwargs):
         sequence_output, _ = self._bert_model.bert(input_ids, token_type_ids, attention_mask,
@@ -32,7 +36,14 @@ class VanillaTableBert(TableBertModel):
         if masked_lm_labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1, reduction='sum')
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.bert_config.vocab_size), masked_lm_labels.view(-1))
-            return masked_lm_loss
+
+            sample_size = masked_lm_labels.ne(-1).sum().item()
+            logging_output = {
+                'sample_size': sample_size,
+                'loss': masked_lm_loss.item()
+            }
+
+            return masked_lm_loss, logging_output
         else:
             return prediction_scores
 
@@ -229,3 +240,41 @@ class VanillaTableBert(TableBertModel):
         }
 
         return context_encoding, column_encoding, info
+
+    def validate(self, data_loader, args):
+        was_training = self.training
+        self.eval()
+
+        keys = ['loss', 'sample_size']
+
+        logging_info_list = []
+        with torch.no_grad():
+            with tqdm(total=len(data_loader), desc=f"Evaluation", file=sys.stdout) as pbar:
+                for step, batch in enumerate(data_loader):
+                    loss_sum, logging_info = self(**batch)
+                    logging_info = {k: logging_info[k] for k in keys}
+                    logging_info_list.append(logging_info)
+
+                    pbar.update(1)
+
+        if was_training:
+            self.train()
+
+        stats = {
+            k: sum(x[k] for x in logging_info_list)
+            for k in keys
+        }
+
+        # handel distributed evaluation
+        if args.multi_gpu:
+            stats = distributed_utils.all_gather_list(stats)
+            stats = {
+                k: sum(x[k] for x in stats)
+                for k in keys
+            }
+
+        valid_result = {
+            'ppl': math.exp(stats['loss'] / stats['sample_size'])
+        }
+
+        return valid_result

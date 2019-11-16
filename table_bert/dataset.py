@@ -22,6 +22,7 @@ from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
 from tqdm import tqdm
 from table_bert.table import Column
+import h5py
 
 
 class DistributedSampler(Sampler):
@@ -159,6 +160,13 @@ class TableDataset(Dataset):
         }
 
     @classmethod
+    def get_shard_size(cls, shard_file: Path):
+        with h5py.File(str(shard_file), 'r', rdcc_nbytes=1024 * 1024 * 2048) as data:
+            shard_size = data['masked_lm_offsets'].shape[0]
+
+        return shard_size
+
+    @classmethod
     def get_epoch_shards_info(cls, shard_file_prefix: Path):
         shard_files = list(shard_file_prefix.parent.glob(shard_file_prefix.name + '.shard*.h5'))
         shard_ids = [int(re.search(r'shard(\d+)', str(f)).group(1)) for f in shard_files]
@@ -179,8 +187,12 @@ class TableDataset(Dataset):
         examples = []
         idx = -1
         for shard_id in range(shard_num):
-            file_name = file_prefix.with_suffix(f'.shard{shard_id}.bin')
-            data = torch.load(str(file_name))
+            file_name = file_prefix.with_suffix(f'.shard{shard_id}.h5')
+            if file_name.exists():
+                data = h5py.File(str(file_name), 'r', rdcc_nbytes=1024 * 1024 * 2048)
+            else:
+                file_name = file_name.with_suffix('.bin')
+                data = torch.load(str(file_name))
 
             sequences = data['sequences']
             segment_a_lengths = data['segment_a_lengths']
@@ -210,6 +222,9 @@ class TableDataset(Dataset):
                 example['masked_lm_label_ids'] = masked_lm_label_ids[tgt_begin: tgt_end]
 
                 examples.append(example)
+
+            if isinstance(data, h5py.File):
+                data.close()
 
         return examples
 

@@ -1,3 +1,4 @@
+import sys
 import json
 from pathlib import Path
 from typing import Union, Dict
@@ -81,6 +82,7 @@ class TableBertModel(nn.Module):
 
         # old table_bert format
         if state_dict is not None:
+            print('warning: loading model from an old version', file=sys.stderr)
             if not any(key.startswith('_bert_model') for key in state_dict):
                 bert_model = BertForMaskedLM.from_pretrained(
                     config.base_model_name,

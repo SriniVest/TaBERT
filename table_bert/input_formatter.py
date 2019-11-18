@@ -86,12 +86,31 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
             )
             column_input_tokens.append(self.config.column_delimiter)
 
+            early_stop = False
             if len(row_input_tokens) + len(column_input_tokens) > max_table_token_length:
-                break
+                valid_column_input_token_len = max_table_token_length - len(row_input_tokens)
+                column_input_tokens = column_input_tokens[:valid_column_input_token_len]
+                end_index = column_start_idx + len(column_input_tokens)
+                keys_to_delete = []
+                for key in token_span_map:
+                    span_start_idx, span_end_idx = token_span_map[key]
+                    if end_index > span_start_idx:
+                        token_span_map[key] = (span_start_idx, end_index)
+                    else:
+                        keys_to_delete.append(key)
+
+                for key in keys_to_delete:
+                    del token_span_map[key]
+
+                early_stop = True
+            elif len(row_input_tokens) + len(column_input_tokens) == max_table_token_length:
+                early_stop = True
 
             row_input_tokens.extend(column_input_tokens)
             column_start_idx = column_start_idx + len(column_input_tokens)
             column_token_span_maps.append(token_span_map)
+
+            if early_stop: break
 
         if row_input_tokens[-1] == self.config.column_delimiter:
             del row_input_tokens[-1]

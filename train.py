@@ -209,7 +209,8 @@ def main():
             model = nn.parallel.DistributedDataParallel(
                 model,
                 find_unused_parameters=True,
-                device_ids=[args.local_rank], output_device=args.local_rank
+                device_ids=[args.local_rank], output_device=args.local_rank,
+                broadcast_buffers=False
             )
         else:
             import apex

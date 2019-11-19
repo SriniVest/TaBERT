@@ -199,11 +199,11 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
         column_candidate_indices = [
             (
-                list(range(*span['column_name'])) +
-                list(range(*span['type'])) +
+                list(range(*span['column_name']) if 'column_name' in span else []) +
+                list(range(*span['type']) if 'type' in span else []) +
                 (
                     span['other_tokens']
-                    if random() < 0.01
+                    if random() < 0.01 and 'other_tokens' in span
                     else []
                 )
             )

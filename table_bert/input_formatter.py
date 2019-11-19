@@ -18,6 +18,10 @@ class TableBertBertInputFormatter(object):
         self.vocab_list = list(self.tokenizer.vocab.keys())
 
 
+class TableTooLongError(ValueError):
+    pass
+
+
 class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
     def get_cell_input(
         self,
@@ -52,15 +56,15 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
         return input, span_map
 
-    def get_input(self, context: List[str], table: Table):
+    def get_input(self, context: List[str], table: Table, trim_long_table=False):
         row_data = [
             column.sample_value_tokens
             for column in table.header
         ]
 
-        return self.get_row_input(context, table.header, row_data)
+        return self.get_row_input(context, table.header, row_data, trim_long_table=trim_long_table)
 
-    def get_row_input(self, context: List[str], header: List[Column], row_data: List[Any]):
+    def get_row_input(self, context: List[str], header: List[Column], row_data: List[Any], trim_long_table=False):
         if self.config.context_first:
             table_tokens_start_idx = len(context) + 2  # account for [CLS] and [SEP]
             # account for [CLS] and [SEP], and the ending [SEP]
@@ -87,30 +91,48 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
             column_input_tokens.append(self.config.column_delimiter)
 
             early_stop = False
-            if len(row_input_tokens) + len(column_input_tokens) > max_table_token_length:
-                valid_column_input_token_len = max_table_token_length - len(row_input_tokens)
-                column_input_tokens = column_input_tokens[:valid_column_input_token_len]
-                end_index = column_start_idx + len(column_input_tokens)
-                keys_to_delete = []
-                for key in token_span_map:
-                    span_start_idx, span_end_idx = token_span_map[key]
-                    if end_index > span_start_idx:
-                        token_span_map[key] = (span_start_idx, end_index)
-                    else:
-                        keys_to_delete.append(key)
+            if trim_long_table:
+                if len(row_input_tokens) + len(column_input_tokens) > max_table_token_length:
+                    valid_column_input_token_len = max_table_token_length - len(row_input_tokens)
+                    column_input_tokens = column_input_tokens[:valid_column_input_token_len]
+                    end_index = column_start_idx + len(column_input_tokens)
+                    keys_to_delete = []
+                    for key in token_span_map:
+                        if key in {'column_name', 'type', 'value', 'whole_span'}:
+                            span_start_idx, span_end_idx = token_span_map[key]
+                            if span_start_idx < end_index < span_end_idx:
+                                token_span_map[key] = (span_start_idx, end_index)
+                            elif end_index < span_start_idx:
+                                keys_to_delete.append(key)
+                        elif key == 'other_tokens':
+                            old_positions = token_span_map[key]
+                            new_positions = [idx for idx in old_positions if idx < end_index]
+                            if not new_positions:
+                                keys_to_delete.append(key)
 
-                for key in keys_to_delete:
-                    del token_span_map[key]
+                    for key in keys_to_delete:
+                        del token_span_map[key]
 
-                early_stop = True
-            elif len(row_input_tokens) + len(column_input_tokens) == max_table_token_length:
-                early_stop = True
+                    # nothing left, we just skip this cell and break
+                    if len(token_span_map) == 0:
+                        break
+
+                    early_stop = True
+                elif len(row_input_tokens) + len(column_input_tokens) == max_table_token_length:
+                    early_stop = True
+            elif len(row_input_tokens) + len(column_input_tokens) > max_table_token_length:
+                break
 
             row_input_tokens.extend(column_input_tokens)
             column_start_idx = column_start_idx + len(column_input_tokens)
             column_token_span_maps.append(token_span_map)
 
             if early_stop: break
+
+        # it is possible that the first cell to too long and cannot fit into `max_table_token_length`
+        # we need to discard this sample
+        if len(row_input_tokens) == 0:
+            raise TableTooLongError()
 
         if row_input_tokens[-1] == self.config.column_delimiter:
             del row_input_tokens[-1]
@@ -172,7 +194,7 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
 
     def create_pretraining_instance(self, context, header):
         table = Table('fake_table', header)
-        input_instance = self.get_input(context, table)
+        input_instance = self.get_input(context, table, trim_long_table=True)
         column_spans = input_instance['column_spans']
 
         column_candidate_indices = [
@@ -283,3 +305,30 @@ class VanillaTableBertInputFormatter(TableBertBertInputFormatter):
         del instance['tokens']
         del instance['masked_lm_labels']
         del instance['info']
+
+
+if __name__ == '__main__':
+    config = TableBertConfig()
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    input_formatter = VanillaTableBertInputFormatter(config, tokenizer)
+
+    header = []
+    for i in range(1000):
+        header.append(
+            Column(
+                name='test',
+                type='text',
+                name_tokens=['test'] * 3,
+                sample_value='ha ha ha yay',
+                sample_value_tokens=['ha', 'ha', 'ha', 'yay']
+            )
+        )
+
+    print(
+        input_formatter.get_row_input(
+            context='12 213 5 345 23 234'.split(),
+            header=header,
+            row_data=[col.sample_value_tokens for col in header],
+            trim_long_table=True
+        )
+    )

@@ -188,7 +188,7 @@ class VanillaTableBert(TableBertModel):
             token_ids = self.tokenizer.convert_tokens_to_ids(instance['tokens'])
 
             input_array[i, :len(token_ids)] = token_ids
-            segment_array[i, instance['segment_a_length']: ] = 1
+            segment_array[i, instance['segment_a_length']: len(token_ids)] = 1
             mask_array[i, :len(token_ids)] = 1.
 
             if table_specific_tensors:

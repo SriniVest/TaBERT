@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from pytorch_pretrained_bert import BertConfig, BertForPreTraining
 from pytorch_pretrained_bert.modeling import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
-    BertLayerNorm, gelu
+    BertLayerNorm, gelu, BertForMaskedLM
 from torch_scatter import scatter_mean
 
 from table_bert.table import Column
@@ -174,11 +174,32 @@ class VerticalAttentionTableBert(VanillaTableBert):
             for _ in range(self.config.num_vertical_layers)
         ])
 
-        for module in [
-            self.vertical_embedding_layer,
-            self.vertical_transformer_layers
-        ]:
-            module.apply(self._bert_model.init_bert_weights)
+        if config.initialize_from:
+            print(f'Loading initial parameters from {config.initialize_from}', file=sys.stderr)
+            initial_state_dict = torch.load(config.initialize_from, map_location='cpu')
+            if not any(key.startswith('_bert_model') for key in initial_state_dict):
+                print('warning: loading model from an old version', file=sys.stderr)
+                bert_model = BertForMaskedLM.from_pretrained(
+                    config.base_model_name,
+                    state_dict=initial_state_dict
+                )
+                self._bert_model = bert_model
+            else:
+                load_result = self.load_state_dict(initial_state_dict, strict=False)
+                if load_result.missing_keys:
+                    print(f'warning: missing keys: {load_result.missing_keys}', file=sys.stderr)
+                if load_result.unexpected_keys:
+                    print(f'warning: unexpected keys: {load_result.unexpected_keys}', file=sys.stderr)
+
+        # added_modules = [self.vertical_embedding_layer, self.vertical_transformer_layers]
+        # if config.predict_cell_tokens:
+        #     added_modules.extend([
+        #         self.span_based_prediction.dense1, self.span_based_prediction.dense2,
+        #         self.span_based_prediction.layer_norm1, self.span_based_prediction.layer_norm2
+        #     ])
+        #
+        # for module in added_modules:
+        #     module.apply(self._bert_model.init_bert_weights)
 
     @property
     def parameter_type(self):

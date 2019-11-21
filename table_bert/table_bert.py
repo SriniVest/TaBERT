@@ -82,8 +82,8 @@ class TableBertModel(nn.Module):
 
         # old table_bert format
         if state_dict is not None:
-            print('warning: loading model from an old version', file=sys.stderr)
             if not any(key.startswith('_bert_model') for key in state_dict):
+                print('warning: loading model from an old version', file=sys.stderr)
                 bert_model = BertForMaskedLM.from_pretrained(
                     config.base_model_name,
                     state_dict=state_dict

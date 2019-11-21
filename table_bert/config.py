@@ -158,6 +158,13 @@ class TableBertConfig(SimpleNamespace):
     def from_dict(cls, args: Dict):
         return cls(**args)
 
+    def with_new_args(self, **updated_args):
+        new_config = self.__class__(vars(self))
+        for key, val in updated_args.items():
+            setattr(new_config, key, val)
+
+        return new_config
+
     def save(self, file_path: Path):
         json.dump(vars(self), file_path.open('w'), indent=2, sort_keys=True, default=str)
 

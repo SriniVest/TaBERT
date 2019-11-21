@@ -21,7 +21,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 import torch.distributed as dist
 from tqdm import tqdm
-from table_bert.table import Column
+from table_bert.table import Column, Table
 import h5py
 
 
@@ -288,6 +288,18 @@ class Example(object):
         }
 
         return example
+
+    def get_table(self):
+        num_columns = len(self.header)
+        num_rows = len(self.column_data[0])
+        row_data = []
+        for row_id in range(num_rows):
+            row = [self.column_data[i][row_id] for i in range(num_columns)]
+            row_data.append(row)
+
+        table = Table(self.uuid, header=self.header, data=row_data)
+
+        return table
 
     @classmethod
     def from_serialized(cls, data) -> 'Example':

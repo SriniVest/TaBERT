@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+import pandas as pd
 
 
 class Column(object):
@@ -47,3 +48,33 @@ class Table(object):
 
     def __len__(self):
         return len(self.data)
+
+    @property
+    def as_row_list(self):
+        if isinstance(self.data[0], dict):
+            return [
+                row[column.name]
+                for row in self.data
+                for column in self.header
+            ]
+
+        return self.data
+
+    def to_data_frame(self, tokenizer=None):
+        row_data = self.as_row_list
+        columns = [column.name for column in self.header]
+
+        if tokenizer:
+            row_data = [
+                [
+                    ' '.join(tokenizer.tokenize(str(cell)))
+                    for cell in row
+                ]
+                for row in row_data
+            ]
+
+            columns = [' '.join(tokenizer.tokenize(str(column))) for column in columns]
+
+        df = pd.DataFrame(row_data, columns=columns)
+
+        return df

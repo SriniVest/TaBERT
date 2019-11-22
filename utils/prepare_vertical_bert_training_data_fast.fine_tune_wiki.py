@@ -152,6 +152,7 @@ def main():
     logger.setLevel(logging.DEBUG)
 
     logger.info(f'Rank {args.global_rank} out of {args.world_size}')
+    logger.info(f'Arguments: {args}')
     sys.stderr.flush()
 
     table_bert_config = VerticalAttentionTableBertConfig.from_dict(vars(args))

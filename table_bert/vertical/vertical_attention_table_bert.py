@@ -191,15 +191,15 @@ class VerticalAttentionTableBert(VanillaTableBert):
                 if load_result.unexpected_keys:
                     print(f'warning: unexpected keys: {load_result.unexpected_keys}', file=sys.stderr)
 
-        # added_modules = [self.vertical_embedding_layer, self.vertical_transformer_layers]
-        # if config.predict_cell_tokens:
-        #     added_modules.extend([
-        #         self.span_based_prediction.dense1, self.span_based_prediction.dense2,
-        #         self.span_based_prediction.layer_norm1, self.span_based_prediction.layer_norm2
-        #     ])
-        #
-        # for module in added_modules:
-        #     module.apply(self._bert_model.init_bert_weights)
+        added_modules = [self.vertical_embedding_layer, self.vertical_transformer_layers]
+        if config.predict_cell_tokens:
+            added_modules.extend([
+                self.span_based_prediction.dense1, self.span_based_prediction.dense2,
+                self.span_based_prediction.layer_norm1, self.span_based_prediction.layer_norm2
+            ])
+
+        for module in added_modules:
+            module.apply(self._bert_model.init_bert_weights)
 
     @property
     def parameter_type(self):

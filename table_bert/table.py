@@ -1,6 +1,8 @@
 from typing import List, Dict, Any
 import pandas as pd
 
+from pytorch_pretrained_bert import BertTokenizer
+
 
 class Column(object):
     def __init__(self, name, type, sample_value=None, **kwargs):
@@ -37,6 +39,24 @@ class Table(object):
         for key, val in kwargs.items():
             self.fields.append(key)
             setattr(self, key, val)
+
+    def tokenize(self, tokenizer: BertTokenizer):
+        for column in self.header:
+            column.name_tokens = tokenizer.tokenize(column.name)
+
+        tokenized_rows = [
+            {k: tokenizer.tokenize(str(v)) for k, v in row.items()}
+            if isinstance(row, dict)
+            else [tokenizer.tokenize(str(v)) for v in row]
+
+            for row in self.data
+        ]
+
+        self.data = tokenized_rows
+
+        setattr(self, 'tokenized', True)
+
+        return self
 
     def with_rows(self, rows):
         extra_fields = {f: getattr(self, f) for f in self.fields}

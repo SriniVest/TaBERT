@@ -53,14 +53,16 @@ class Table(object):
     def as_row_list(self):
         if isinstance(self.data[0], dict):
             return [
-                row[column.name]
+                [
+                    row[column.name]
+                    for column in self.header
+                ]
                 for row in self.data
-                for column in self.header
             ]
 
         return self.data
 
-    def to_data_frame(self, tokenizer=None):
+    def to_data_frame(self, tokenizer=None, detokenize=False):
         row_data = self.as_row_list
         columns = [column.name for column in self.header]
 
@@ -74,6 +76,14 @@ class Table(object):
             ]
 
             columns = [' '.join(tokenizer.tokenize(str(column))) for column in columns]
+        elif detokenize:
+            row_data = [
+                [
+                    ' '.join(cell).replace(' ##', '')
+                    for cell in row
+                ]
+                for row in row_data
+            ]
 
         df = pd.DataFrame(row_data, columns=columns)
 

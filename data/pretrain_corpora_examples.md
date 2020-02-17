@@ -1,9 +1,17 @@
 
-Here we show sampled Web tables and their surrounding natural language context in the pre-training corpora. We also include table captions to the NL context as they are high-quality summaries of the table. During pretraining, we sample a context window of 128 tokens as the NL utterance.
+Here we show example Web tables and their surrounding natural language context 
+in the pre-training corpora. We also include table captions in the NL context, 
+as they are high-quality summaries of the table. 
+During pre-training, we sample a window of 128 tokens from the NL context as the 
+synthetic utterance paired with tables. 
 
-Longer context is truncated by showing only the first few sentences in each paragraph.
+Long context in the examples below is truncated 
+by showing only the first few sentences in each paragraph.
+
+### Example
 
 **Context**
+
 ```
 This is a comparison between U.S. states and sovereign states' Nominal Gross Domestic Product for the Alternative Future as based on International Monetary Fund and Bureau of Economic Analysis data. Many of the states of the United States have large gross domestic product (called gross state product) which would rank highly on a list of countries world GDP.
 
@@ -11,9 +19,10 @@ National GDPs and States GDPs (Table Caption)
 ```
 
 **Table**
+
 | #  | Country        | GDP (USD million) |
 |----|----------------|-------------------|
-|    | World[1]       | 84,835,462        |
+|    | World          | 84,835,462        |
 | 1  | China          | 13,457,267        |
 | 2  | Japan          | 5,070,626         |
 | 3  | Germany        | 4,029,140         |
@@ -25,12 +34,16 @@ National GDPs and States GDPs (Table Caption)
 | 9  | Brazil         | 1,909,386         |
 | 10 | Texas          | 1,818,585         |
 
+### Example
+
 **Context**
+
 ```
 This article includes a list of countries and dependent territories sorted by their real gross domestic product growth rate; the rate of growth of the value of all final goods and services produced within a state in a given year. The statistics were compiled from the IMF World Economic Outlook Database with the vast majority of estimates corresponding to the 2018 calendar year. Values from other sources are referenced as such. Rates in bold italic are estimates. Rates in bold italic are estimates.
 ```
 
 **Table**
+
 | Rank | Country/region      | Real GDP growth rate (%) |
 | ---- | ------------------- | ------------------------ |
 | 1    | Libya               | 17.9                     |
@@ -44,9 +57,10 @@ This article includes a list of countries and dependent territories sorted by th
 | 9    | Ivory Coast         | 7.4                      |
 | 10   | Antigua and Barbuda | 7.4                      |
 
-
+### Example
 
 **Context**
+
 ```
 When it comes to Tom Cruise sci-fi movies, 'Oblivion's $38 million opening edges out 'Minority Report' ($35 million) but is still dwarfed by 'War of the Worlds' ($64 million, which, to be fair, also had Steven Spielberg in its corner)...
 
@@ -55,6 +69,7 @@ The weekend was also very kind to '42,' which took a small drop from last week f
 Meanwhile, 'The Croods' held onto the number three spot for the third weekend in a row, grossing $9.5 million for a $154 million total...
 ```
 **Table**
+
 | Film                       | Weekend             | Per Screen |
 | -------------------------- | ------------------- | ---------- |
 | Oblivion                   | $38,152,000         | $10.09     |
@@ -68,13 +83,16 @@ Meanwhile, 'The Croods' held onto the number three spot for the third weekend in
 | Jurassic Park              | $4,008,000 (-54.8)  | $1,720     |
 | Oz the Great and Powerful  | $3,048,000 (-37.3)  | $1,490     |
 
+### Example
 
 **Context**
+
 ```
 The population development of the places in Brown. Source: US Census Bureau (web). 2000 and 2010 population of incorporated places in the boundaries of 2010.
 ```
 
 **Table**
+
 | Name           | Status  | County | Population Census 1990-04-01 | Population Census 2000-04-01 | Population Census 2010-04-01 |     |
 | -------------- | ------- | ------ | ---------------------------- | ---------------------------- | ---------------------------- | --- |
 | Mound Station  | Village | Brown  | 147                          | 124                          | 122                          |
@@ -82,11 +100,14 @@ The population development of the places in Brown. Source: US Census Bureau (web
 | Ripley         | Village | Brown  | 75                           | 105                          | 86                           |
 | Versailles     | Village | Brown  | 480                          | 569                          | 478                          |
 
+### Example
 
 **Context**
+
 ```
 Directory of Airports in Cook Islands. Runway lengths are based on available landing distance where possible.
 ```
+
 **Table**
 
 | Kind  | ICAO | IATA | City            | Name                    | Latitude   | Longitude   | Max Runway |

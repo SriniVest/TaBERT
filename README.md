@@ -57,7 +57,10 @@ context_encoding, column_encoding, info_dict = model.encode(
 )
 ```
 
-For the returned tuple `context_encoding` and `column_encoding` are PyTorch tensors representing utterances and table columns. `info_dict` contains useful information (e.g., context/table masks, original inputs to BERT) for downstream usage.
+For the returned tuple, `context_encoding` and `column_encoding` are PyTorch tensors 
+representing utterances and table columns, respectively. `info_dict` contains useful 
+meta information (e.g., context/table masks, the original input tensors to BERT) for 
+downstream application.
 
 ```
 context_encoding.shape

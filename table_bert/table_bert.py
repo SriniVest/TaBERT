@@ -52,6 +52,13 @@ class TableBertModel(nn.Module):
         config_file: Union[str, Path],
         **override_config: Dict
     ):
+        if model_path in ('bert-base-uncased', 'bert-large-uncased'):
+            from table_bert.vanilla_table_bert import VanillaTableBert, TableBertConfig
+            config = TableBertConfig(**override_config)
+            model = VanillaTableBert(config)
+
+            return model
+
         if model_path and isinstance(model_path, str):
             model_path = Path(model_path)
         if isinstance(config_file, str):

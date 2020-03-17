@@ -71,7 +71,7 @@ class Table(object):
 
     @property
     def as_row_list(self):
-        if isinstance(self.data[0], dict):
+        if len(self) > 0 and isinstance(self.data[0], dict):
             return [
                 [
                     row[column.name]

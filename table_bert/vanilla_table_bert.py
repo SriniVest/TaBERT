@@ -1,6 +1,6 @@
 import math
 import sys
-from typing import List, Any
+from typing import List, Any, Tuple, Dict
 import numpy as np
 from fairseq import distributed_utils
 from tqdm import tqdm
@@ -57,6 +57,7 @@ class VanillaTableBert(TableBertModel):
         column_token_mask: torch.Tensor,
         column_token_to_column_id: torch.Tensor,
         column_mask: torch.Tensor,
+        return_bert_encoding: bool = False,
         **kwargs
     ):
 
@@ -98,7 +99,11 @@ class VanillaTableBert(TableBertModel):
         )
         context_encoding = context_encoding * context_token_mask.unsqueeze(-1)
 
-        return context_encoding, column_encoding
+        encoding_info = {}
+        if return_bert_encoding:
+            encoding_info['bert_encoding'] = sequence_output
+
+        return context_encoding, column_encoding, encoding_info
 
     @staticmethod
     def get_column_representation(
@@ -224,19 +229,27 @@ class VanillaTableBert(TableBertModel):
 
         return tensor_dict, instances
 
-    def encode(self, contexts: List[List[str]], tables: List[Table]):
+    def encode(
+        self,
+        contexts: List[List[str]],
+        tables: List[Table],
+        return_bert_encoding: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
         device = next(self.parameters()).device
 
         for key in tensor_dict.keys():
             tensor_dict[key] = tensor_dict[key].to(device)
 
-        context_encoding, column_encoding = self.encode_context_and_table(
-            **tensor_dict)
+        context_encoding, column_encoding, encoding_info = self.encode_context_and_table(
+            **tensor_dict,
+            return_bert_encoding=return_bert_encoding
+        )
 
         info = {
             'tensor_dict': tensor_dict,
-            'instances': instances
+            'instances': instances,
+            **encoding_info
         }
 
         return context_encoding, column_encoding, info

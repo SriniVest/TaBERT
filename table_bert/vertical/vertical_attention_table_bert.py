@@ -20,6 +20,7 @@ from table_bert.vanilla_table_bert import VanillaTableBert, VanillaTableBertInpu
 from table_bert.table import *
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
 from table_bert.vertical.input_formatter import VerticalAttentionTableBertInputFormatter
+from typing import Tuple
 
 
 class VerticalEmbeddingLayer(nn.Module):
@@ -474,7 +475,14 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         return valid_result
 
-    def encode(self, contexts: List[List[str]], tables: List[Table]):
+    def encode(
+            self,
+            contexts: List[List[str]],
+            tables: List[Table],
+            return_bert_encoding: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        assert return_bert_encoding is False, 'VerticalTableBert does not support `return_bert_encoding=True`'
+
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
         tensor_dict = {
             k: v.to(self.device) if torch.is_tensor(v) else v

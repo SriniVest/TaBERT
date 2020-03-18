@@ -1,10 +1,11 @@
 import sys
 import json
 from pathlib import Path
-from typing import Union, Dict
+from typing import Union, Dict, List, Tuple
 
 import torch
 from pytorch_pretrained_bert import BertForPreTraining, BertForMaskedLM, BertTokenizer
+from table_bert import Table
 from torch import nn as nn
 
 from table_bert.config import TableBertConfig
@@ -100,3 +101,11 @@ class TableBertModel(nn.Module):
                 model.load_state_dict(state_dict, strict=True)
 
         return model
+
+    def encode(
+            self,
+            contexts: List[List[str]],
+            tables: List[Table],
+            **kwargs: Dict
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        raise NotImplementedError

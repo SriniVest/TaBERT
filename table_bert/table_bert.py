@@ -5,7 +5,7 @@ from typing import Union, Dict, List, Tuple
 
 import torch
 from pytorch_pretrained_bert import BertForPreTraining, BertForMaskedLM, BertTokenizer
-from table_bert import Table
+from table_bert.table import Table
 from torch import nn as nn
 
 from table_bert.config import TableBertConfig

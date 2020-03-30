@@ -103,6 +103,11 @@ class TableBertConfig(SimpleNamespace):
         self.context_sample_strategy = context_sample_strategy
         self.table_mask_strategy = table_mask_strategy
 
+        if not hasattr(self, 'vocab_size_or_config_json_file'):
+            bert_config = BERT_CONFIGS[self.base_model_name]
+            for k, v in vars(bert_config).items():
+                setattr(self, k, v)
+
     @classmethod
     def add_args(cls, parser: ArgumentParser):
         parser.add_argument('--base_model_name', type=str, default='bert-base-uncased')

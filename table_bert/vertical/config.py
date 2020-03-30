@@ -28,11 +28,6 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         # self.vertical_layer_use_intermediate_transform = vertical_layer_use_intermediate_transform
         self.initialize_from = initialize_from
 
-        if not hasattr(self, 'vocab_size_or_config_json_file'):
-            bert_config = BERT_CONFIGS[self.base_model_name]
-            for k, v in vars(bert_config).items():
-                setattr(self, k, v)
-
     @classmethod
     def add_args(cls, parser: ArgumentParser):
         TableBertConfig.add_args(parser)

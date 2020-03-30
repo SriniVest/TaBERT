@@ -1,14 +1,27 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 import pandas as pd
 
 from pytorch_pretrained_bert import BertTokenizer
 
 
 class Column(object):
-    def __init__(self, name, type, sample_value=None, **kwargs):
+    def __init__(
+        self,
+        name: str,
+        type: str,
+        sample_value: Any = None,
+        sample_value_tokens: List[str] = None,
+        is_primary_key: bool = False,
+        foreign_key: 'Column' = None,
+        **kwargs
+    ):
         self.name = name
         self.type = type
         self.sample_value = sample_value
+        self.sample_value_tokens = sample_value_tokens
+        self.foreign_key: Column = foreign_key
+        self.is_primary_key = is_primary_key
+        self.table = None
 
         self.fields = []
         for key, val in kwargs.items():
@@ -27,14 +40,55 @@ class Column(object):
 
         return data
 
+    def __setattr__(self, key, value):
+        if key == 'table':
+            assert getattr(self, key, None) is None, f'The column has already been bind to a table `{self.table}`. ' \
+                                                     f'Please remove the reference to the existing table first'
+        super(Column, self).__setattr__(key, value)
+
+    def __hash__(self):
+        table = (None, ) if self.table is None else (self.table.id, self.table.name)
+        return hash((table, self.name, self.type))
+
+    def __eq__(self, other):
+        if not isinstance(other, Column):
+            return False
+
+        if self.table ^ other.table:
+            return False
+
+        if self.table and (other.table.id != self.table.id or other.table.name != self.table.name):
+            return False
+
+        return self.name == other.name and self.type == other.type
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        return f'Column[name={self.name}, type={self.type}]'
+
+    __str__ = __repr__
+
 
 class Table(object):
-    def __init__(self, id, header, data=None, **kwargs):
+    def __init__(
+        self,
+        id,
+        header: List[Column],
+        data: Union[List[Dict], List[List]] = None,
+        name: str = None,
+        **kwargs
+    ):
         self.id = id
+        self.name = name
         self.header = header
         self.header_index = {column.name: column for column in header}
         self.data: List[Any] = data
         self.fields = []
+
+        for column in self.header:
+            setattr(column, 'table', self)
 
         for key, val in kwargs.items():
             self.fields.append(key)
@@ -108,3 +162,9 @@ class Table(object):
         df = pd.DataFrame(row_data, columns=columns)
 
         return df
+
+    def __repr__(self):
+        column_names =  ', '.join(col.name for col in self.header)
+        return f'Table {self.id} [{column_names} | {len(self)} rows]'
+
+    __str__ = __repr__

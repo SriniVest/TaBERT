@@ -10,12 +10,14 @@ class Column(object):
         name: str,
         type: str,
         sample_value: Any = None,
-        sample_value_tokens: List[str] = None,
         is_primary_key: bool = False,
         foreign_key: 'Column' = None,
+        name_tokens: List[str] = None,
+        sample_value_tokens: List[str] = None,
         **kwargs
     ):
         self.name = name
+        self.name_tokens = name_tokens
         self.type = type
         self.sample_value = sample_value
         self.sample_value_tokens = sample_value_tokens
@@ -28,11 +30,20 @@ class Column(object):
             self.fields.append(key)
             setattr(self, key, val)
 
+    def copy(self):
+        return Column(
+            **self.to_dict()
+        )
+
     def to_dict(self):
         data = {
             'name': self.name,
+            'name_tokens': self.name_tokens,
             'type': self.type,
             'sample_value': self.sample_value,
+            'sample_value_tokens': self.sample_value_tokens,
+            'is_primary_key': self.is_primary_key,
+            'foreign_key': self.foreign_key
         }
 
         for key in self.fields:
@@ -44,6 +55,10 @@ class Column(object):
         if key == 'table':
             assert getattr(self, key, None) is None, f'The column has already been bind to a table `{self.table}`. ' \
                                                      f'Please remove the reference to the existing table first'
+
+        # if key != 'fields' and getattr(self, key, None) is None:
+        #     self.fields.append(key)
+
         super(Column, self).__setattr__(key, value)
 
     def __hash__(self):
@@ -54,11 +69,11 @@ class Column(object):
         if not isinstance(other, Column):
             return False
 
-        if self.table ^ other.table:
-            return False
+        # if self.table is not other.table:
+        #     return False
 
-        if self.table and (other.table.id != self.table.id or other.table.name != self.table.name):
-            return False
+        # if self.table and (other.table.id != self.table.id or other.table.name != self.table.name):
+        #     return False
 
         return self.name == other.name and self.type == other.type
 

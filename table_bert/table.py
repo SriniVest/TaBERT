@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Union
 import pandas as pd
 
-from pytorch_pretrained_bert import BertTokenizer
+from table_bert.utils import BertTokenizer
 
 
 class Column(object):
@@ -112,6 +112,9 @@ class Table(object):
     def tokenize(self, tokenizer: BertTokenizer):
         for column in self.header:
             column.name_tokens = tokenizer.tokenize(column.name)
+            if column.sample_value is not None:
+                column.sample_value_tokens = tokenizer.tokenize(
+                    str(column.sample_value))
 
         tokenized_rows = [
             {k: tokenizer.tokenize(str(v)) for k, v in row.items()}

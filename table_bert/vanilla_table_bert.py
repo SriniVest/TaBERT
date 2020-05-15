@@ -6,12 +6,12 @@ from fairseq import distributed_utils
 from tqdm import tqdm
 
 import torch
-from pytorch_pretrained_bert import BertForPreTraining
 from torch.nn import CrossEntropyLoss
 from torch_scatter import scatter_max, scatter_mean
 
+from table_bert.utils import BertForPreTraining, BertForMaskedLM, hf_flag
 from table_bert.table_bert import TableBertModel
-from table_bert.config import TableBertConfig
+from table_bert.config import TableBertConfig, BERT_CONFIGS
 from table_bert.table import Table
 from table_bert.input_formatter import VanillaTableBertInputFormatter
 
@@ -25,7 +25,9 @@ class VanillaTableBert(TableBertModel):
         bert_model: BertForPreTraining = None,
         **kwargs
     ):
-        super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
+        super(VanillaTableBert, self).__init__(config, **kwargs)
+
+        self._bert_model = BertForMaskedLM.from_pretrained(config.base_model_name)
         self.input_formatter = VanillaTableBertInputFormatter(self.config, self.tokenizer)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, **kwargs):
@@ -70,8 +72,11 @@ class VanillaTableBert(TableBertModel):
         # print('column_token_to_column_id', column_token_to_column_id.sum(dim=-1), file=sys.stderr)
         # print('column_mask', column_mask.size(), file=sys.stderr)
 
-        # try:
-        sequence_output, _ = self.bert(input_ids, segment_ids, attention_mask, output_all_encoded_layers=False)
+        kwargs = {} if hf_flag == 'new' else {'output_all_encoded_layers': False}
+        sequence_output, _ = self.bert(
+            input_ids=input_ids, token_type_ids=segment_ids, attention_mask=attention_mask,
+            **kwargs
+        )
         # except:
         #     print('!!!!!Exception!!!!!')
         #     datum = (input_ids, segment_ids, attention_mask, question_token_mask,

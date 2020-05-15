@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Union
 
-from pytorch_pretrained_bert import BertTokenizer, BertConfig
+from table_bert.utils import BertTokenizer, BertConfig
 
 BERT_CONFIGS = {
     'bert-base-uncased': BertConfig(

@@ -1,8 +1,7 @@
 from argparse import ArgumentParser
 from pathlib import Path
 
-from pytorch_pretrained_bert import BertForMaskedLM
-
+from table_bert.utils import BertForMaskedLM
 from table_bert.config import TableBertConfig, BERT_CONFIGS
 
 

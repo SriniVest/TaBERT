@@ -1,13 +1,13 @@
+from typing import Union, Dict, List, Tuple, Optional
 import sys
 import json
 from pathlib import Path
-from typing import Union, Dict, List, Tuple
 
 import torch
-from pytorch_pretrained_bert import BertForPreTraining, BertForMaskedLM, BertTokenizer
-from table_bert.table import Table
 from torch import nn as nn
 
+from table_bert.utils import BertForPreTraining, BertForMaskedLM, BertTokenizer
+from table_bert.table import Table
 from table_bert.config import TableBertConfig
 
 
@@ -50,7 +50,7 @@ class TableBertModel(nn.Module):
     def load(
         cls,
         model_path: Union[str, Path],
-        config_file: Union[str, Path],
+        config_file: Optional[Union[str, Path]] = None,
         **override_config: Dict
     ):
         if model_path in ('bert-base-uncased', 'bert-large-uncased'):
@@ -62,7 +62,10 @@ class TableBertModel(nn.Module):
 
         if model_path and isinstance(model_path, str):
             model_path = Path(model_path)
-        if isinstance(config_file, str):
+
+        if config_file is None:
+            config_file = model_path.parent / 'tb_config.json'
+        elif isinstance(config_file, str):
             config_file = Path(config_file)
 
         if model_path:
@@ -90,6 +93,24 @@ class TableBertModel(nn.Module):
 
         # old table_bert format
         if state_dict is not None:
+            # fix the name for weight `cls.predictions.decoder.bias`,
+            # to make it compatible with the latest version of `transformers`
+
+            from table_bert.utils import hf_flag
+            if hf_flag == 'new':
+                old_key_to_new_key_names: List[(str, str)] = []
+                for key in state_dict:
+                    if key.endswith('.predictions.bias'):
+                        old_key_to_new_key_names.append(
+                            (
+                                key,
+                                key.replace('.predictions.bias', '.predictions.decoder.bias')
+                            )
+                        )
+
+                for old_key, new_key in old_key_to_new_key_names:
+                    state_dict[new_key] = state_dict[old_key]
+
             if not any(key.startswith('_bert_model') for key in state_dict):
                 print('warning: loading model from an old version', file=sys.stderr)
                 bert_model = BertForMaskedLM.from_pretrained(

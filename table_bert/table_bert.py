@@ -2,11 +2,12 @@ from typing import Union, Dict, List, Tuple, Optional
 import sys
 import json
 from pathlib import Path
+import logging
 
 import torch
 from torch import nn as nn
 
-from table_bert.utils import BertForPreTraining, BertForMaskedLM, BertTokenizer
+from table_bert.utils import BertForPreTraining, BertForMaskedLM, BertModel, BertTokenizer
 from table_bert.table import Table
 from table_bert.config import TableBertConfig
 
@@ -18,21 +19,36 @@ WEIGHTS_NAME = 'pytorch_model.bin'
 
 
 class TableBertModel(nn.Module):
+    CONFIG_CLASS = TableBertConfig
+
     def __init__(
         self,
         config: TableBertConfig,
-        bert_model: BertForPreTraining = None,
         **kwargs
     ):
         nn.Module.__init__(self)
-        bert_model = bert_model or BertForMaskedLM.from_pretrained(config.base_model_name)
+
+        bert_model: Union[BertForPreTraining, BertModel] = kwargs.pop('bert_model', None)
+
+        if bert_model is not None:
+            logging.warning(
+                'using `bert_model` to initialize `TableBertModel` is deprecated. '
+                'I will still set `self._bert_model` this time.'
+            )
+
         self._bert_model = bert_model
         self.tokenizer = BertTokenizer.from_pretrained(config.base_model_name)
         self.config = config
 
     @property
     def bert(self):
-        return self._bert_model.bert
+        if not hasattr(self, '_bert_model') or getattr(self, '_bert_model') is None:
+            raise ValueError('This instance does not have a base BERT model.')
+
+        if hasattr(self._bert_model, 'bert'):
+            return self._bert_model.bert
+        else:
+            return self._bert_model
 
     @property
     def bert_config(self):
@@ -120,6 +136,77 @@ class TableBertModel(nn.Module):
                 model._bert_model = bert_model
             else:
                 model.load_state_dict(state_dict, strict=True)
+
+        return model
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: Optional[Union[str, Path]] = None,
+        config_file: Optional[Union[str, Path]] = None,
+        config: Optional[TableBertConfig] = None,
+        state_dict: Optional[Dict] = None,
+        **kwargs
+    ):
+        # TODO: this is quite hacky.
+        from table_bert.vertical.vertical_attention_table_bert import (
+            VerticalAttentionTableBert,
+            VerticalAttentionTableBertConfig
+        )
+
+        from table_bert.vanilla_table_bert import VanillaTableBert
+
+        if not isinstance(config, TableBertConfig):
+            if config_file:
+                config_file = Path(config_file)
+            else:
+                assert model_name_or_path, f'model path is None'
+                config_file = Path(model_name_or_path).parent / 'tb_config.json'
+
+            assert config_file.exists(), f'Unable to find table bert config file at {config_file}'
+
+            if cls == TableBertModel and VerticalAttentionTableBertConfig.is_valid_config_file(config_file):
+                config_cls = VerticalAttentionTableBertConfig
+            else:
+                config_cls = TableBertConfig
+
+            config = config_cls.from_file(config_file)
+
+        overriding_config = config.extract_args(kwargs, pop=True)
+        if len(overriding_config) > 0:
+            config = config.with_new_args(**overriding_config)
+
+        model_kwargs = kwargs
+
+        model_cls = cls if cls != TableBertModel else {
+            TableBertConfig.__name__: VanillaTableBert,
+            VerticalAttentionTableBertConfig.__name__: VerticalAttentionTableBert
+        }[config.__class__.__name__]
+
+        model = model_cls(config, **model_kwargs)
+
+        if state_dict is None:
+            state_dict = torch.load(model_name_or_path, map_location="cpu")
+
+        # fix the name for weight `cls.predictions.decoder.bias`,
+        # to make it compatible with the latest version of `transformers`
+
+        from table_bert.utils import hf_flag
+        if hf_flag == 'new':
+            old_key_to_new_key_names: List[(str, str)] = []
+            for key in state_dict:
+                if key.endswith('.predictions.bias'):
+                    old_key_to_new_key_names.append(
+                        (
+                            key,
+                            key.replace('.predictions.bias', '.predictions.decoder.bias')
+                        )
+                    )
+
+            for old_key, new_key in old_key_to_new_key_names:
+                state_dict[new_key] = state_dict[old_key]
+
+        model.load_state_dict(state_dict, strict=True)
 
         return model
 

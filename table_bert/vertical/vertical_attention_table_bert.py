@@ -168,7 +168,6 @@ class VerticalAttentionTableBert(VanillaTableBert):
     def __init__(
         self,
         config: VerticalAttentionTableBertConfig,
-        bert_model: BertForPreTraining = None,
         **kwargs
     ):
         super(VanillaTableBert, self).__init__(config, **kwargs)

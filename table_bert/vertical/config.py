@@ -1,5 +1,8 @@
+import json
 from argparse import ArgumentParser
 from pathlib import Path
+
+from typing import Union
 
 from table_bert.utils import BertForMaskedLM
 from table_bert.config import TableBertConfig, BERT_CONFIGS
@@ -39,3 +42,7 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         parser.set_defaults(predict_cell_tokens=False)
 
         parser.add_argument("--initialize_from", type=Path, default=None)
+
+    @staticmethod
+    def is_valid_config_file(file_path: Union[str, Path]):
+        return 'num_vertical_layers' in json.load(open(file_path))

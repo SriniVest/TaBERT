@@ -1,3 +1,4 @@
+import logging
 import math
 import sys
 from typing import List, Any, Tuple, Dict
@@ -22,7 +23,6 @@ class VanillaTableBert(TableBertModel):
     def __init__(
         self,
         config: TableBertConfig,
-        bert_model: BertForPreTraining = None,
         **kwargs
     ):
         super(VanillaTableBert, self).__init__(config, **kwargs)
@@ -296,3 +296,10 @@ class VanillaTableBert(TableBertModel):
         }
 
         return valid_result
+
+    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True):
+        if not any(key.startswith('_bert_model') for key in state_dict):
+            logging.warning('warning: loading model from an old version')
+            self._bert_model.load_state_dict(state_dict, strict)
+        else:
+            super(VanillaTableBert, self).load_state_dict(state_dict, strict)

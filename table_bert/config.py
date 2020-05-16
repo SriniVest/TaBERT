@@ -1,8 +1,10 @@
 import io
+import inspect
 import json
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Dict, Union
 
@@ -190,3 +192,30 @@ class TableBertConfig(SimpleNamespace):
 
     def to_log_string(self):
         return json.dumps(vars(self), indent=2, sort_keys=True, default=str)
+
+    def to_dict(self):
+        return vars(self)
+
+    def get_default_values_for_parameters(self):
+        signature = inspect.signature(self.__init__)
+
+        default_args = OrderedDict(
+            (k, v.default)
+            for k, v in signature.parameters.items()
+            if v.default is not inspect.Parameter.empty
+        )
+
+        return default_args
+
+    def extract_args(self, kwargs, pop=True):
+        arg_dict = {}
+
+        for key, default_val in self.get_default_values_for_parameters().items():
+            if key in kwargs:
+                val = kwargs.get(key)
+                if pop:
+                    kwargs.pop(key)
+
+                arg_dict[key] = val
+
+        return arg_dict

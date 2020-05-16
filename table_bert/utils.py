@@ -2,7 +2,7 @@ import logging
 
 try:
     from transformers.tokenization_bert import BertTokenizer
-    from transformers.modeling_bert import BertForMaskedLM, BertForPreTraining
+    from transformers.modeling_bert import BertForMaskedLM, BertForPreTraining, BertModel
     from transformers.configuration_bert import BertConfig
 
     hf_flag = 'new'

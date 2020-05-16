@@ -23,7 +23,6 @@ class Column(object):
         self.sample_value_tokens = sample_value_tokens
         self.foreign_key: Column = foreign_key
         self.is_primary_key = is_primary_key
-        self.table = None
 
         self.fields = []
         for key, val in kwargs.items():
@@ -52,9 +51,9 @@ class Column(object):
         return data
 
     def __setattr__(self, key, value):
-        if key == 'table':
-            assert getattr(self, key, None) is None, f'The column has already been bind to a table `{self.table}`. ' \
-                                                     f'Please remove the reference to the existing table first'
+        # if key == 'table':
+        #     assert getattr(self, key, None) is None, f'The column has already been bind to a table `{self.table}`. ' \
+        #                                              f'Please remove the reference to the existing table first'
 
         # if key != 'fields' and getattr(self, key, None) is None:
         #     self.fields.append(key)
@@ -62,8 +61,8 @@ class Column(object):
         super(Column, self).__setattr__(key, value)
 
     def __hash__(self):
-        table = (None, ) if self.table is None else (self.table.id, self.table.name)
-        return hash((table, self.name, self.type))
+        # table = (None, ) if self.table is None else (self.table.id, self.table.name)
+        return hash((self.name, self.type))
 
     def __eq__(self, other):
         if not isinstance(other, Column):
@@ -102,8 +101,8 @@ class Table(object):
         self.data: List[Any] = data
         self.fields = []
 
-        for column in self.header:
-            setattr(column, 'table', self)
+        # for column in self.header:
+        #     setattr(column, 'table', self)
 
         for key, val in kwargs.items():
             self.fields.append(key)
@@ -133,7 +132,9 @@ class Table(object):
     def with_rows(self, rows):
         extra_fields = {f: getattr(self, f) for f in self.fields}
 
-        return Table(self.id, self.header, data=rows, **extra_fields)
+        header_copy = [column.copy() for column in self.header]
+
+        return Table(self.id, header_copy, data=rows, **extra_fields)
 
     def get_column(self, column_name):
         return self.header_index[column_name]

@@ -219,3 +219,17 @@ class TableBertConfig(SimpleNamespace):
                 arg_dict[key] = val
 
         return arg_dict
+
+    @staticmethod
+    def infer_model_class_from_config_dict(config_dict):
+        if 'num_vertical_layers' in config_dict:
+            from .vertical.vertical_attention_table_bert import VerticalAttentionTableBert
+            return VerticalAttentionTableBert
+
+        from .vanilla_table_bert import VanillaTableBert
+        return VanillaTableBert
+
+    @staticmethod
+    def infer_model_class_from_config_file(config_file):
+        config_dict = json.load(open(config_file))
+        return TableBertConfig.infer_model_class_from_config_dict(config_dict)

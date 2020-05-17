@@ -1,12 +1,14 @@
 import io
+import inspect
 import json
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Dict, Union
 
-from pytorch_pretrained_bert import BertTokenizer, BertConfig
+from table_bert.utils import BertTokenizer, BertConfig
 
 BERT_CONFIGS = {
     'bert-base-uncased': BertConfig(
@@ -103,6 +105,11 @@ class TableBertConfig(SimpleNamespace):
         self.context_sample_strategy = context_sample_strategy
         self.table_mask_strategy = table_mask_strategy
 
+        if not hasattr(self, 'vocab_size_or_config_json_file'):
+            bert_config = BERT_CONFIGS[self.base_model_name]
+            for k, v in vars(bert_config).items():
+                setattr(self, k, v)
+
     @classmethod
     def add_args(cls, parser: ArgumentParser):
         parser.add_argument('--base_model_name', type=str, default='bert-base-uncased')
@@ -185,3 +192,44 @@ class TableBertConfig(SimpleNamespace):
 
     def to_log_string(self):
         return json.dumps(vars(self), indent=2, sort_keys=True, default=str)
+
+    def to_dict(self):
+        return vars(self)
+
+    def get_default_values_for_parameters(self):
+        signature = inspect.signature(self.__init__)
+
+        default_args = OrderedDict(
+            (k, v.default)
+            for k, v in signature.parameters.items()
+            if v.default is not inspect.Parameter.empty
+        )
+
+        return default_args
+
+    def extract_args(self, kwargs, pop=True):
+        arg_dict = {}
+
+        for key, default_val in self.get_default_values_for_parameters().items():
+            if key in kwargs:
+                val = kwargs.get(key)
+                if pop:
+                    kwargs.pop(key)
+
+                arg_dict[key] = val
+
+        return arg_dict
+
+    @staticmethod
+    def infer_model_class_from_config_dict(config_dict):
+        if 'num_vertical_layers' in config_dict:
+            from .vertical.vertical_attention_table_bert import VerticalAttentionTableBert
+            return VerticalAttentionTableBert
+
+        from .vanilla_table_bert import VanillaTableBert
+        return VanillaTableBert
+
+    @staticmethod
+    def infer_model_class_from_config_file(config_file):
+        config_dict = json.load(open(config_file))
+        return TableBertConfig.infer_model_class_from_config_dict(config_dict)

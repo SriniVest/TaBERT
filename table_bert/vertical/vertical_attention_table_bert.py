@@ -3,6 +3,8 @@ import math
 import sys
 
 from fairseq import distributed_utils
+
+from table_bert.config import BERT_CONFIGS
 from table_bert.vertical.dataset import collate
 from tqdm import tqdm
 
@@ -10,16 +12,24 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-from pytorch_pretrained_bert import BertConfig, BertForPreTraining
-from pytorch_pretrained_bert.modeling import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
-    BertLayerNorm, gelu, BertForMaskedLM
+# from transformers.modeling_bert
+from table_bert.utils import hf_flag
+if hf_flag == 'old':
+    from pytorch_pretrained_bert.modeling import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
+        BertLayerNorm, gelu
+else:
+    from transformers.modeling_bert import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
+        BertLayerNorm, gelu
+
 from torch_scatter import scatter_mean
 
 from table_bert.table import Column
+from table_bert.utils import BertConfig, BertForPreTraining, BertForMaskedLM
 from table_bert.vanilla_table_bert import VanillaTableBert, VanillaTableBertInputFormatter, TableBertConfig
 from table_bert.table import *
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
 from table_bert.vertical.input_formatter import VerticalAttentionTableBertInputFormatter
+from typing import Tuple
 
 
 class VerticalEmbeddingLayer(nn.Module):
@@ -158,10 +168,11 @@ class VerticalAttentionTableBert(VanillaTableBert):
     def __init__(
         self,
         config: VerticalAttentionTableBertConfig,
-        bert_model: BertForPreTraining = None,
         **kwargs
     ):
-        super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
+        super(VanillaTableBert, self).__init__(config, **kwargs)
+
+        self._bert_model = BertForMaskedLM.from_pretrained(config.base_model_name)
 
         self.input_formatter = VerticalAttentionTableBertInputFormatter(self.config, self.tokenizer)
 
@@ -199,7 +210,10 @@ class VerticalAttentionTableBert(VanillaTableBert):
             ])
 
         for module in added_modules:
-            module.apply(self._bert_model.init_bert_weights)
+            if hf_flag == 'new':
+                module.apply(self._bert_model._init_weights)
+            else:
+                module.apply(self._bert_model.init_bert_weights)
 
     @property
     def parameter_type(self):
@@ -249,9 +263,27 @@ class VerticalAttentionTableBert(VanillaTableBert):
         flattened_sequence_mask = sequence_mask.view(batch_size * max_row_num, -1)
 
         # (batch_size * max_row_num, sequence_len, hidden_size)
+        # (sequence_output, pooler_output)
+        if hf_flag == 'old':
+            kwargs = {'output_all_encoded_layers': False}
+        else:
+            kwargs = {}
+
         bert_output, _ = self.bert(
-            flattened_input_ids, flattened_segment_ids, flattened_sequence_mask,
-            output_all_encoded_layers=False)
+            input_ids=flattened_input_ids,
+            token_type_ids=flattened_segment_ids,
+            attention_mask=flattened_sequence_mask,
+            **kwargs
+        )
+
+        # torch.save(
+        #     {
+        #         'input_ids': flattened_input_ids,
+        #         'token_type_ids': flattened_segment_ids,
+        #         'attention_mask': flattened_sequence_mask
+        #     },
+        #     f'data/test_data/bert_output.{hf_flag}_hf.bin'
+        # )
 
         # (batch_size, max_row_num, sequence_len, hidden_size)
         bert_output = bert_output.view(batch_size, max_row_num, sequence_len, -1)
@@ -474,7 +506,14 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         return valid_result
 
-    def encode(self, contexts: List[List[str]], tables: List[Table]):
+    def encode(
+            self,
+            contexts: List[List[str]],
+            tables: List[Table],
+            return_bert_encoding: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        assert return_bert_encoding is False, 'VerticalTableBert does not support `return_bert_encoding=True`'
+
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
         tensor_dict = {
             k: v.to(self.device) if torch.is_tensor(v) else v

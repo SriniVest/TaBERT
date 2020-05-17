@@ -15,7 +15,7 @@ import redis
 import numpy as np
 import torch
 import zmq
-from pytorch_pretrained_bert import BertTokenizer
+from table_bert.utils import BertTokenizer
 from table_bert.config import TableBertConfig
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler

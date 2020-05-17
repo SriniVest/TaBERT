@@ -1,8 +1,10 @@
+import json
 from argparse import ArgumentParser
 from pathlib import Path
 
-from pytorch_pretrained_bert import BertForMaskedLM
+from typing import Union
 
+from table_bert.utils import BertForMaskedLM
 from table_bert.config import TableBertConfig, BERT_CONFIGS
 
 
@@ -28,11 +30,6 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         # self.vertical_layer_use_intermediate_transform = vertical_layer_use_intermediate_transform
         self.initialize_from = initialize_from
 
-        if not hasattr(self, 'vocab_size_or_config_json_file'):
-            bert_config = BERT_CONFIGS[self.base_model_name]
-            for k, v in vars(bert_config).items():
-                setattr(self, k, v)
-
     @classmethod
     def add_args(cls, parser: ArgumentParser):
         TableBertConfig.add_args(parser)
@@ -45,3 +42,7 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         parser.set_defaults(predict_cell_tokens=False)
 
         parser.add_argument("--initialize_from", type=Path, default=None)
+
+    @staticmethod
+    def is_valid_config_file(file_path: Union[str, Path]):
+        return 'num_vertical_layers' in json.load(open(file_path))

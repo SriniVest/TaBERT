@@ -1,17 +1,18 @@
+import logging
 import math
 import sys
-from typing import List, Any
+from typing import List, Any, Tuple, Dict
 import numpy as np
 from fairseq import distributed_utils
 from tqdm import tqdm
 
 import torch
-from pytorch_pretrained_bert import BertForPreTraining
 from torch.nn import CrossEntropyLoss
 from torch_scatter import scatter_max, scatter_mean
 
+from table_bert.utils import BertForPreTraining, BertForMaskedLM, hf_flag
 from table_bert.table_bert import TableBertModel
-from table_bert.config import TableBertConfig
+from table_bert.config import TableBertConfig, BERT_CONFIGS
 from table_bert.table import Table
 from table_bert.input_formatter import VanillaTableBertInputFormatter
 
@@ -22,10 +23,11 @@ class VanillaTableBert(TableBertModel):
     def __init__(
         self,
         config: TableBertConfig,
-        bert_model: BertForPreTraining = None,
         **kwargs
     ):
-        super(VanillaTableBert, self).__init__(config, bert_model=bert_model, **kwargs)
+        super(VanillaTableBert, self).__init__(config, **kwargs)
+
+        self._bert_model = BertForMaskedLM.from_pretrained(config.base_model_name)
         self.input_formatter = VanillaTableBertInputFormatter(self.config, self.tokenizer)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, **kwargs):
@@ -57,6 +59,7 @@ class VanillaTableBert(TableBertModel):
         column_token_mask: torch.Tensor,
         column_token_to_column_id: torch.Tensor,
         column_mask: torch.Tensor,
+        return_bert_encoding: bool = False,
         **kwargs
     ):
 
@@ -69,8 +72,11 @@ class VanillaTableBert(TableBertModel):
         # print('column_token_to_column_id', column_token_to_column_id.sum(dim=-1), file=sys.stderr)
         # print('column_mask', column_mask.size(), file=sys.stderr)
 
-        # try:
-        sequence_output, _ = self.bert(input_ids, segment_ids, attention_mask, output_all_encoded_layers=False)
+        kwargs = {} if hf_flag == 'new' else {'output_all_encoded_layers': False}
+        sequence_output, _ = self.bert(
+            input_ids=input_ids, token_type_ids=segment_ids, attention_mask=attention_mask,
+            **kwargs
+        )
         # except:
         #     print('!!!!!Exception!!!!!')
         #     datum = (input_ids, segment_ids, attention_mask, question_token_mask,
@@ -98,7 +104,11 @@ class VanillaTableBert(TableBertModel):
         )
         context_encoding = context_encoding * context_token_mask.unsqueeze(-1)
 
-        return context_encoding, column_encoding
+        encoding_info = {}
+        if return_bert_encoding:
+            encoding_info['bert_encoding'] = sequence_output
+
+        return context_encoding, column_encoding, encoding_info
 
     @staticmethod
     def get_column_representation(
@@ -224,19 +234,27 @@ class VanillaTableBert(TableBertModel):
 
         return tensor_dict, instances
 
-    def encode(self, contexts: List[List[str]], tables: List[Table]):
+    def encode(
+        self,
+        contexts: List[List[str]],
+        tables: List[Table],
+        return_bert_encoding: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
         device = next(self.parameters()).device
 
         for key in tensor_dict.keys():
             tensor_dict[key] = tensor_dict[key].to(device)
 
-        context_encoding, column_encoding = self.encode_context_and_table(
-            **tensor_dict)
+        context_encoding, column_encoding, encoding_info = self.encode_context_and_table(
+            **tensor_dict,
+            return_bert_encoding=return_bert_encoding
+        )
 
         info = {
             'tensor_dict': tensor_dict,
-            'instances': instances
+            'instances': instances,
+            **encoding_info
         }
 
         return context_encoding, column_encoding, info
@@ -278,3 +296,10 @@ class VanillaTableBert(TableBertModel):
         }
 
         return valid_result
+
+    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True):
+        if not any(key.startswith('_bert_model') for key in state_dict):
+            logging.warning('warning: loading model from an old version')
+            self._bert_model.load_state_dict(state_dict, strict)
+        else:
+            super(VanillaTableBert, self).load_state_dict(state_dict, strict)

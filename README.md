@@ -1,8 +1,10 @@
 # TaBERT: Learning Contextual Representations for Natural Language Utterances and Structured Tables
 
+This repository contains source code for the [`TaBERT` model](https://arxiv.org/), a pre-trained language model for learning joint representations of natural language utterances and (semi-)structured tables for semantic parsing. `TaBERT` is pre-trained on a massive corpus of 26M Web tables and their associated natural language context, and could be used as a drop-in replacement of a semantic parsers original encoder to compute representations for utterances and table schemas (columns).
+
 ## Installation
 
-First, install the conda environment `pytorch` with supporting libraries.
+First, install the conda environment `tabert` with supporting libraries.
 
 ```bash
 bash scripts/setup_env.sh
@@ -11,20 +13,25 @@ bash scripts/setup_env.sh
 Once the conda environment is created, install `TaBERT` using the following command:
 
 ```bash
-conda activate pytorch
+conda activate tabert
 pip install --editable .
 ```
 
+**Integration with HuggingFace's pytorch-transformers Library** is still WIP. While all the pre-trained models were developed based on the old version of the library `pytorch-pretrained-bert`, they are compatible with the the latest version `transformers`. The conda environment will install both versions of the transformers library, and `TaBERT` will use `pytorch-pretrained-bert` by default. You could uninstall the `pytorch-pretrained-bert` library if you prefer using `TaBERT` with the latest version of `transformers`.
+
+## Pre-trained Models
+
+To be release.
+
 ## Using a Pre-trained Model
 
-First, load the model from a checkpoint folder
+To load a pre-trained model from a checkpoint file:
 
 ```python
 from table_bert import TableBertModel
 
-model = TableBertModel.load(
+model = TableBertModel.from_pretrained(
     'path/to/pretrained/model/checkpoint.bin',
-    config_file='path/to/pretrained/model/config.json'
 )
 ```
 
@@ -35,8 +42,8 @@ from table_bert import Table, Column
 table = Table(
     id='List of countries by GDP (PPP)',
     header=[
-        Column('Nation', 'text'),
-        Column('Gross Domestic Product', 'real')
+        Column('Nation', 'text', sample_value='United States'),
+        Column('Gross Domestic Product', 'real', sample_value='21,439,453')
     ],
     data=[
         ['United States', '21,439,453'],
@@ -45,7 +52,7 @@ table = Table(
     ]
 ).tokenize(model.tokenizer)
 
-# visualize table in IPython notebook:
+# To visualize table in an IPython notebook:
 # display(table.to_data_frame(), detokenize=True)
 
 context = 'show me countries ranked by GDP'
@@ -59,10 +66,33 @@ context_encoding, column_encoding, info_dict = model.encode(
 
 For the returned tuple `context_encoding` and `column_encoding` are PyTorch tensors representing utterances and table columns. `info_dict` contains useful information (e.g., context/table masks, original inputs to BERT) for downstream usage.
 
-```
+```python
 context_encoding.shape
 >>> torch.Size([1, 7, 768])
 
 column_encoding.shape
 >>> torch.Size([1, 2, 768])
+```
+
+**Use Vanilla BERT** To initialize a TaBERT model from the parameters of BERT:
+
+```python
+from table_bert import VanillaTableBert, TableBertConfig
+
+model = VanillaTableBert(
+    TableBertConfig(base_model_name='bert-base-uncased')
+)
+```
+
+## Reference
+
+If you plan to use `TaBERT` in your project, please consider citing our paper:
+```
+@inproceedings{yin20acl,
+    title = {Ta{BERT}: Pretraining for Joint Understanding of Textual and Tabular Data},
+    author = {Pengcheng Yin and Graham Neubig and Wen-tau Yih and Sebastian Riedel},
+    booktitle = {Annual Conference of the Association for Computational Linguistics (ACL)},
+    month = {July},
+    year = {2020}
+}
 ```

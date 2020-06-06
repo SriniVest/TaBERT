@@ -99,3 +99,7 @@ If you plan to use `TaBERT` in your project, please consider citing [our paper](
     year = {2020}
 }
 ```
+
+## License
+
+TaBERT is CC-BY-NC 4.0 licensed as of now.

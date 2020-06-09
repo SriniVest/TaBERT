@@ -91,12 +91,13 @@ model = VanillaTableBert(
 
 If you plan to use `TaBERT` in your project, please consider citing [our paper](https://arxiv.org/abs/2005.08314):
 ```
-@inproceedings{yin20acl,
-    title = {Ta{BERT}: Pretraining for Joint Understanding of Textual and Tabular Data},
-    author = {Pengcheng Yin and Graham Neubig and Wen-tau Yih and Sebastian Riedel},
-    booktitle = {Annual Conference of the Association for Computational Linguistics (ACL)},
-    month = {July},
-    year = {2020}
+@misc{karpukhin2020dense,
+    title={Dense Passage Retrieval for Open-Domain Question Answering},
+    author={Vladimir Karpukhin and Barlas Oğuz and Sewon Min and Patrick Lewis and Ledell Wu and Sergey Edunov and Danqi Chen and Wen-tau Yih},
+    year={2020},
+    eprint={2004.04906},
+    archivePrefix={arXiv},
+    primaryClass={cs.CL}
 }
 ```
 

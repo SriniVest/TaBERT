@@ -1,6 +1,6 @@
 # TaBERT: Learning Contextual Representations for Natural Language Utterances and Structured Tables
 
-This repository contains source code for the [`TaBERT` model](https://arxiv.org/), a pre-trained language model for learning joint representations of natural language utterances and (semi-)structured tables for semantic parsing. `TaBERT` is pre-trained on a massive corpus of 26M Web tables and their associated natural language context, and could be used as a drop-in replacement of a semantic parsers original encoder to compute representations for utterances and table schemas (columns).
+This repository contains source code for the [`TaBERT` model](https://arxiv.org/abs/2005.08314), a pre-trained language model for learning joint representations of natural language utterances and (semi-)structured tables for semantic parsing. `TaBERT` is pre-trained on a massive corpus of 26M Web tables and their associated natural language context, and could be used as a drop-in replacement of a semantic parsers original encoder to compute representations for utterances and table schemas (columns).
 
 ## Installation
 
@@ -21,7 +21,7 @@ pip install --editable .
 
 ## Pre-trained Models
 
-To be release.
+To be released.
 
 ## Using a Pre-trained Model
 
@@ -89,7 +89,7 @@ model = VanillaTableBert(
 
 ## Reference
 
-If you plan to use `TaBERT` in your project, please consider citing our paper:
+If you plan to use `TaBERT` in your project, please consider citing [our paper](https://arxiv.org/abs/2005.08314):
 ```
 @inproceedings{yin20acl,
     title = {Ta{BERT}: Pretraining for Joint Understanding of Textual and Tabular Data},
@@ -99,3 +99,7 @@ If you plan to use `TaBERT` in your project, please consider citing our paper:
     year = {2020}
 }
 ```
+
+## License
+
+TaBERT is CC-BY-NC 4.0 licensed as of now.

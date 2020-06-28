@@ -7,7 +7,11 @@ import logging
 import torch
 from torch import nn as nn
 
-from table_bert.utils import BertForPreTraining, BertForMaskedLM, BertModel, BertTokenizer
+from table_bert.utils import (
+    BertForPreTraining, BertForMaskedLM, BertModel,
+    BertTokenizer, BertConfig,
+    TransformerVersion, TRANSFORMER_VERSION
+)
 from table_bert.table import Table
 from table_bert.config import TableBertConfig
 
@@ -41,7 +45,9 @@ class TableBertModel(nn.Module):
         self.config = config
 
     @property
-    def bert(self):
+    def bert(self) -> BertModel:
+        """Return the underlying base BERT model"""
+
         if not hasattr(self, '_bert_model') or getattr(self, '_bert_model') is None:
             raise ValueError('This instance does not have a base BERT model.')
 
@@ -51,7 +57,7 @@ class TableBertModel(nn.Module):
             return self._bert_model
 
     @property
-    def bert_config(self):
+    def bert_config(self) -> BertConfig:
         return self.bert.config
 
     @property
@@ -147,8 +153,9 @@ class TableBertModel(nn.Module):
         config: Optional[TableBertConfig] = None,
         state_dict: Optional[Dict] = None,
         **kwargs
-    ):
-        # TODO: this is quite hacky.
+    ) -> 'TableBertModel':
+        # Avoid cyclic import.
+        # TODO: a better way to import these dependencies?
         from table_bert.vertical.vertical_attention_table_bert import (
             VerticalAttentionTableBert,
             VerticalAttentionTableBertConfig
@@ -163,8 +170,9 @@ class TableBertModel(nn.Module):
                 assert model_name_or_path, f'model path is None'
                 config_file = Path(model_name_or_path).parent / 'tb_config.json'
 
-            assert config_file.exists(), f'Unable to find table bert config file at {config_file}'
+            assert config_file.exists(), f'Unable to find TaBERT config file at {config_file}'
 
+            # Identify from the json config file whether the model uses vertical self-attention (TaBERT(K>1))
             if cls == TableBertModel and VerticalAttentionTableBertConfig.is_valid_config_file(config_file):
                 config_cls = VerticalAttentionTableBertConfig
             else:
@@ -178,10 +186,16 @@ class TableBertModel(nn.Module):
 
         model_kwargs = kwargs
 
-        model_cls = cls if cls != TableBertModel else {
-            TableBertConfig.__name__: VanillaTableBert,
-            VerticalAttentionTableBertConfig.__name__: VerticalAttentionTableBert
-        }[config.__class__.__name__]
+        model_cls = (
+            cls    # If the current class is not the base generic class, then we assume the user want to
+                   # load a pre-trained instance of that specific model class. Otherwise, we infer the model
+                   # class from its config class
+            if cls != TableBertModel
+            else {
+                TableBertConfig.__name__: VanillaTableBert,
+                VerticalAttentionTableBertConfig.__name__: VerticalAttentionTableBert
+            }[config.__class__.__name__]
+        )
 
         model = model_cls(config, **model_kwargs)
 
@@ -189,10 +203,8 @@ class TableBertModel(nn.Module):
             state_dict = torch.load(model_name_or_path, map_location="cpu")
 
         # fix the name for weight `cls.predictions.decoder.bias`,
-        # to make it compatible with the latest version of `transformers`
-
-        from table_bert.utils import hf_flag
-        if hf_flag == 'new':
+        # to make it compatible with the latest version of HuggingFace `transformers`
+        if TRANSFORMER_VERSION == TransformerVersion.TRANSFORMERS:
             old_key_to_new_key_names: List[(str, str)] = []
             for key in state_dict:
                 if key.endswith('.predictions.bias'):

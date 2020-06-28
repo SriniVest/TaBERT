@@ -1,35 +1,29 @@
+from typing import Tuple
 import gc
 import math
 import sys
-
-from fairseq import distributed_utils
-
-from table_bert.config import BERT_CONFIGS
-from table_bert.vertical.dataset import collate
-from tqdm import tqdm
-
 import numpy as np
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-# from transformers.modeling_bert
-from table_bert.utils import hf_flag
-if hf_flag == 'old':
-    from pytorch_pretrained_bert.modeling import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
-        BertLayerNorm, gelu
-else:
-    from transformers.modeling_bert import BertSelfOutput, BertIntermediate, BertOutput, BertLMPredictionHead, \
-        BertLayerNorm, gelu
 
 from torch_scatter import scatter_mean
+from fairseq import distributed_utils
 
 from table_bert.table import Column
-from table_bert.utils import BertConfig, BertForPreTraining, BertForMaskedLM
+from table_bert.utils import (
+    BertConfig, BertForPreTraining, BertForMaskedLM,
+    BertSelfOutput, BertIntermediate, BertOutput,
+    BertLMPredictionHead, BertLayerNorm,
+    gelu,
+    TransformerVersion, TRANSFORMER_VERSION
+)
 from table_bert.vanilla_table_bert import VanillaTableBert, VanillaTableBertInputFormatter, TableBertConfig
 from table_bert.table import *
 from table_bert.vertical.config import VerticalAttentionTableBertConfig
 from table_bert.vertical.input_formatter import VerticalAttentionTableBertInputFormatter
-from typing import Tuple
+from table_bert.vertical.dataset import collate
 
 
 class VerticalEmbeddingLayer(nn.Module):
@@ -210,7 +204,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
             ])
 
         for module in added_modules:
-            if hf_flag == 'new':
+            if TRANSFORMER_VERSION == TransformerVersion.TRANSFORMERS:
                 module.apply(self._bert_model._init_weights)
             else:
                 module.apply(self._bert_model.init_bert_weights)
@@ -264,7 +258,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         # (batch_size * max_row_num, sequence_len, hidden_size)
         # (sequence_output, pooler_output)
-        if hf_flag == 'old':
+        if TRANSFORMER_VERSION == TransformerVersion.PYTORCH_PRETRAINED_BERT:
             kwargs = {'output_all_encoded_layers': False}
         else:
             kwargs = {}

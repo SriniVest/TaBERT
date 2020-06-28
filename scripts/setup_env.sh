@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-<<<<<<< HEAD
-=======
 # Copyright (c) Facebook, Inc. and its affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
->>>>>>> 06302b6520a86144a15a8a79793c83fc667df802
 
 echo "----------------- Check Env -----------------"
 nvidia-smi

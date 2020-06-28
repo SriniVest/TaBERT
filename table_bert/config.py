@@ -17,6 +17,7 @@ from typing import Dict, Union
 
 from table_bert.utils import BertTokenizer, BertConfig
 
+
 BERT_CONFIGS = {
     'bert-base-uncased': BertConfig(
         vocab_size_or_config_json_file=30522,

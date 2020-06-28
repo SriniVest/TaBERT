@@ -167,8 +167,17 @@ class TableBertModel(nn.Module):
             VerticalAttentionTableBert,
             VerticalAttentionTableBertConfig
         )
-
         from table_bert.vanilla_table_bert import VanillaTableBert
+
+        if model_name_or_path in {'bert-base-uncased', 'bert-large-uncased'}:
+            model = VanillaTableBert(
+                TableBertConfig(
+                    base_model_name=model_name_or_path,
+                    column_representation='mean_pool_column_name'
+                )
+            )
+
+            return model
 
         if not isinstance(config, TableBertConfig):
             if config_file:

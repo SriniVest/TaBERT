@@ -21,7 +21,7 @@ pip install --editable .
 
 ## Pre-trained Models
 
-
+To be released.
 
 ## Using a Pre-trained Model
 
@@ -84,6 +84,10 @@ from table_bert import TableBertModel
 
 model = TableBertModel.from_pretrained('bert-base-uncased')
 ```
+
+## Example Applications
+
+TaBERT could be used as a general-purpose representation learning layer for semantic parsing tasks over database tables. Example applications could be found under the `examples` folder.
 
 ## Reference
 

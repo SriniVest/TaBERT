@@ -26,6 +26,6 @@ setup(
     #
     #   py_modules=["my_module"],
     #
-    packages=find_packages(exclude=['exp_runs', 'scripts', 'preprocess', 'utils']),
+    packages=find_packages(exclude=['exp_runs', 'scripts', 'preprocess', 'utils', 'examples']),
     python_requires='>=3.6'
 )

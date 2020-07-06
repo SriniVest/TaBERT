@@ -170,12 +170,12 @@ class TableBertModel(nn.Module):
         from table_bert.vanilla_table_bert import VanillaTableBert
 
         if model_name_or_path in {'bert-base-uncased', 'bert-large-uncased'}:
-            model = VanillaTableBert(
-                TableBertConfig(
-                    base_model_name=model_name_or_path,
-                    column_representation='mean_pool_column_name'
-                )
-            )
+            config = TableBertConfig(base_model_name=model_name_or_path)
+            overriding_config = config.extract_args(kwargs, pop=True)
+            if len(overriding_config) > 0:
+                config = config.with_new_args(**overriding_config)
+
+            model = VanillaTableBert(config)
 
             return model
 

@@ -189,7 +189,7 @@ class TableBertConfig(SimpleNamespace):
         return cls(**args)
 
     def with_new_args(self, **updated_args):
-        new_config = self.__class__(vars(self))
+        new_config = self.__class__(**vars(self))
         for key, val in updated_args.items():
             setattr(new_config, key, val)
 

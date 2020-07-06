@@ -21,7 +21,7 @@ pip install --editable .
 
 ## Pre-trained Models
 
-To be released.
+
 
 ## Using a Pre-trained Model
 
@@ -80,11 +80,9 @@ column_encoding.shape
 **Use Vanilla BERT** To initialize a TaBERT model from the parameters of BERT:
 
 ```python
-from table_bert import VanillaTableBert, TableBertConfig
+from table_bert import TableBertModel
 
-model = VanillaTableBert(
-    TableBertConfig(base_model_name='bert-base-uncased')
-)
+model = TableBertModel.from_pretrained('bert-base-uncased')
 ```
 
 ## Reference
